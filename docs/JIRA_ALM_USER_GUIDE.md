@@ -15,18 +15,50 @@ DockedLauncher is a lightweight application launcher that docks to the edge of y
 
 h2. Getting Started
 
+h3. Prerequisites
+
+* Python 3.6 or higher (check with {{python --version}})
+* Git (check with {{git --version}})
+* Windows 10 or 11
+
 h3. Installation
 
+Open a terminal (PowerShell or Command Prompt) and run:
+
 {code}
-git clone https://github.com/YOUR_USERNAME/dockedlauncher-qt.git
+git clone https://github.com/aeth-git/dockedlauncher-qt.git
 cd dockedlauncher-qt
 pip install -r requirements.txt
 {code}
 
-*Requirements:*
-* Python 3.6 or higher
-* Windows 10 or 11
-* PyQt5 and Pillow (installed automatically via requirements.txt)
+This installs two dependencies:
+* *PyQt5* - GUI framework (widely used, no security concerns)
+* *Pillow* - Image processing library (widely used, no security concerns)
+
+h3. First Run
+
+{code}
+run.bat
+{code}
+
+Or from command line:
+
+{code}
+pythonw -m launcher
+{code}
+
+A small *blue tab* will appear on the edge of your screen. That's the launcher. Hover over it to expand.
+
+h3. Source Repository
+
+||Item||Value||
+|URL|[https://github.com/aeth-git/dockedlauncher-qt|https://github.com/aeth-git/dockedlauncher-qt]|
+|License|MIT|
+|Language|Python|
+|Dependencies|PyQt5, Pillow|
+|Network Calls|None|
+|Registry Edits|None|
+|Admin Required|No|
 
 h3. Running the Launcher
 
