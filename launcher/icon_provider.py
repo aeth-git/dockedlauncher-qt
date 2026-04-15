@@ -1,24 +1,29 @@
-"""High-resolution icon extraction using Windows Shell + Qt."""
+"""High-resolution icon extraction with persistent QPixmap LRU cache."""
 import ctypes
 import ctypes.wintypes
 import os
 import subprocess
+from collections import OrderedDict
 
-from PyQt5.QtWidgets import QFileIconProvider, QApplication
+from PyQt5.QtWidgets import QFileIconProvider
 from PyQt5.QtCore import QFileInfo, QSize
-from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor
+from PyQt5.QtGui import QIcon, QPixmap, QColor
 from PyQt5.QtWinExtras import QtWin
 
-from .constants import ICON_SIZE
+from .constants import ICON_SIZE, ACCENT_COLOR
+from .logger import get_logger
 
+_log = get_logger("icon_provider")
 _provider = QFileIconProvider()
-_cache = {}
 
-# Windows Shell constants for jumbo icons
+# LRU cache storing QPixmap (actual pixel data, survives widget deletion)
+_MAX_CACHE = 200
+_pixmap_cache = OrderedDict()
+
+# Windows Shell constants
 SHGFI_SYSICONINDEX = 0x4000
-SHGFI_ICON = 0x100
-SHIL_JUMBO = 4       # 256x256
-SHIL_EXTRALARGE = 2  # 48x48
+SHIL_JUMBO = 4
+SHIL_EXTRALARGE = 2
 IID_IImageList = b'\x26\x59\xEB\x46\x2E\x58\x17\x40\x9F\xDF\xE8\x99\x8D\xAA\x09\x50'
 
 
@@ -32,114 +37,116 @@ class SHFILEINFOW(ctypes.Structure):
     ]
 
 
-def get_icon(filepath, size=ICON_SIZE):
-    """Get a QIcon for the given file path. Returns jumbo (256x256) when available."""
+def get_pixmap(filepath, size=256):
+    """Get a cached 256x256 QPixmap for the given file. LRU eviction at 200 entries."""
     key = os.path.normcase(filepath)
-    if key in _cache:
-        return _cache[key]
-    icon = _extract_icon(filepath, size)
-    _cache[key] = icon
-    return icon
+    if key in _pixmap_cache:
+        _pixmap_cache.move_to_end(key)
+        return _pixmap_cache[key]
+
+    pixmap = _extract_pixmap(filepath, size)
+    _pixmap_cache[key] = pixmap
+    if len(_pixmap_cache) > _MAX_CACHE:
+        evicted_key, _ = _pixmap_cache.popitem(last=False)
+        _log.debug("Cache evicted: %s", evicted_key)
+    return pixmap
+
+
+def get_icon(filepath, size=ICON_SIZE):
+    """Get a QIcon (wraps cached pixmap). Backward compatible."""
+    return QIcon(get_pixmap(filepath))
 
 
 def clear_cache():
-    _cache.clear()
+    _pixmap_cache.clear()
 
 
-def _extract_icon(filepath, size):
-    """Extract highest resolution icon available."""
+def _extract_pixmap(filepath, size):
+    """Extract highest resolution icon and return as QPixmap."""
     if not os.path.exists(filepath):
-        return _default_icon(size)
+        return _default_pixmap(size)
 
-    # Try jumbo shell icon (256x256) via SHGetImageList
-    icon = _extract_jumbo_shell_icon(filepath)
-    if icon and not icon.isNull():
-        return icon
+    # Try jumbo shell icon (256x256)
+    pixmap = _extract_jumbo_pixmap(filepath)
+    if pixmap and not pixmap.isNull() and pixmap.width() > 1:
+        return pixmap
 
     # Try QFileIconProvider
     icon = _provider.icon(QFileInfo(filepath))
-    if not icon.isNull() and not _is_blank_icon(icon, size):
-        return icon
+    if not icon.isNull():
+        pm = icon.pixmap(QSize(size, size))
+        if not _is_blank_pixmap(pm):
+            return pm
 
-    # For .lnk: resolve target and retry both methods
+    # For .lnk: resolve target and retry
     if filepath.lower().endswith(".lnk"):
         target = _resolve_lnk_target(filepath)
         if target and os.path.exists(target):
-            icon = _extract_jumbo_shell_icon(target)
-            if icon and not icon.isNull():
-                return icon
+            pixmap = _extract_jumbo_pixmap(target)
+            if pixmap and not pixmap.isNull() and pixmap.width() > 1:
+                return pixmap
             icon = _provider.icon(QFileInfo(target))
-            if not icon.isNull() and not _is_blank_icon(icon, size):
-                return icon
+            if not icon.isNull():
+                pm = icon.pixmap(QSize(size, size))
+                if not _is_blank_pixmap(pm):
+                    return pm
 
-    return _default_icon(size)
+    return _default_pixmap(size)
 
 
-def _extract_jumbo_shell_icon(filepath):
-    """Extract a 256x256 jumbo icon using Windows SHGetImageList."""
+def _extract_jumbo_pixmap(filepath):
+    """Extract jumbo icon via SHGetImageList + QtWin.fromHICON → QPixmap."""
     try:
         shell32 = ctypes.windll.shell32
-        user32 = ctypes.windll.user32
-        gdi32 = ctypes.windll.gdi32
         comctl32 = ctypes.windll.comctl32
+        user32 = ctypes.windll.user32
 
-        # Get system icon index
         sfi = SHFILEINFOW()
         result = shell32.SHGetFileInfoW(
-            filepath, 0, ctypes.byref(sfi), ctypes.sizeof(sfi),
-            SHGFI_SYSICONINDEX
+            filepath, 0, ctypes.byref(sfi), ctypes.sizeof(sfi), SHGFI_SYSICONINDEX
         )
         if not result:
             return None
 
         icon_index = sfi.iIcon
 
-        # Try jumbo (256x256), then extra-large (48x48)
         for shil_type in (SHIL_JUMBO, SHIL_EXTRALARGE):
             image_list = ctypes.c_void_p()
-            hr = shell32.SHGetImageList(
-                shil_type, IID_IImageList, ctypes.byref(image_list)
-            )
+            hr = shell32.SHGetImageList(shil_type, IID_IImageList, ctypes.byref(image_list))
             if hr != 0 or not image_list.value:
                 continue
 
-            hicon = comctl32.ImageList_GetIcon(image_list, icon_index, 0x1)  # ILD_TRANSPARENT
+            hicon = comctl32.ImageList_GetIcon(image_list, icon_index, 0x1)
             if not hicon:
                 continue
 
-            qicon = _hicon_to_qicon(hicon, user32, gdi32)
-            user32.DestroyIcon(hicon)
-            if qicon and not qicon.isNull() and not _is_blank_icon(qicon, 48):
-                return qicon
+            try:
+                pixmap = QtWin.fromHICON(hicon)
+                user32.DestroyIcon(hicon)
+                if not pixmap.isNull() and not _is_blank_pixmap(pixmap):
+                    return pixmap
+            except Exception:
+                user32.DestroyIcon(hicon)
+                continue
 
         return None
-    except Exception:
-        return None
-
-
-def _hicon_to_qicon(hicon, user32, gdi32):
-    """Convert a Windows HICON to a QIcon using QtWin.fromHICON."""
-    try:
-        pixmap = QtWin.fromHICON(hicon)
-        if pixmap.isNull():
-            return None
-        return QIcon(pixmap)
-    except Exception:
+    except Exception as e:
+        _log.warning("Jumbo icon extraction failed for %s: %s", filepath, e)
         return None
 
 
-def _is_blank_icon(icon, size):
-    """Check if an icon is blank by sampling pixels."""
-    pixmap = icon.pixmap(QSize(size, size))
+def _is_blank_pixmap(pixmap):
+    """Check if a pixmap is blank by sampling pixels."""
     if pixmap.isNull():
         return True
     img = pixmap.toImage()
     if img.isNull():
         return True
     colors = set()
-    step = max(1, size // 8)
-    for x in range(0, min(size, img.width()), step):
-        for y in range(0, min(size, img.height()), step):
+    w, h = img.width(), img.height()
+    step = max(1, min(w, h) // 8)
+    for x in range(0, w, step):
+        for y in range(0, h, step):
             colors.add(img.pixel(x, y))
             if len(colors) > 2:
                 return False
@@ -153,13 +160,16 @@ def _resolve_lnk_target(lnk_path):
              "(New-Object -ComObject WScript.Shell).CreateShortcut('{}').TargetPath".format(lnk_path)],
             capture_output=True, text=True, timeout=5
         )
-        target = result.stdout.strip()
-        return target if target else None
-    except Exception:
+        return result.stdout.strip() or None
+    except subprocess.TimeoutExpired:
+        _log.warning("Timeout resolving .lnk target: %s", lnk_path)
+        return None
+    except Exception as e:
+        _log.warning("Failed to resolve .lnk target %s: %s", lnk_path, e)
         return None
 
 
-def _default_icon(size):
+def _default_pixmap(size=256):
     pixmap = QPixmap(size, size)
-    pixmap.fill(QColor("#1f6aa5"))
-    return QIcon(pixmap)
+    pixmap.fill(QColor(ACCENT_COLOR))
+    return pixmap

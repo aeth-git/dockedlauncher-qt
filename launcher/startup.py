@@ -3,6 +3,9 @@ import os
 import sys
 
 from .constants import APP_NAME
+from .logger import get_logger
+
+_log = get_logger("startup")
 
 
 def get_startup_folder():
@@ -34,8 +37,10 @@ def enable_auto_start():
             f.write("@echo off\r\n")
             f.write('cd /d "{}"\r\n'.format(work_dir))
             f.write("start /b {} \r\n".format(cmd))
+        _log.info("Auto-start enabled: %s", bat)
         return True
-    except IOError:
+    except IOError as e:
+        _log.error("Failed to enable auto-start: %s", e)
         return False
 
 

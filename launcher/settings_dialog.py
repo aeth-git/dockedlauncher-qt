@@ -1,6 +1,6 @@
-"""Settings dialog: theme, opacity, dock edge, auto-start."""
+"""Settings panel - QWidget (not QDialog) for stability."""
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QRadioButton, QSlider, QCheckBox, QPushButton, QButtonGroup,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -9,22 +9,24 @@ from .constants import (
     LEFT, RIGHT, TOP, BOTTOM,
     THEME_DARK, THEME_LIGHT,
     MIN_OPACITY, MAX_OPACITY,
-    ACCENT_COLOR, DARK_BG,
+    ACCENT_COLOR, GLASS_BG_SOLID as DARK_BG,
 )
 from . import startup
 
 
-class SettingsDialog(QDialog):
-    """Modal settings dialog."""
+class SettingsDialog(QWidget):
+    """Settings window (top-level QWidget)."""
 
     settings_changed = pyqtSignal(dict)
 
     def __init__(self, config, parent=None):
-        super().__init__(parent)
+        # No parent: standalone top-level window
+        super().__init__(None)
         self._config = config.copy()
         self.setWindowTitle("Launcher Settings")
         self.setFixedSize(320, 340)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        # Standard window with title bar - simplest and most stable
+        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
         self.setStyleSheet("background-color: {}; color: white;".format(DARK_BG))
 
         layout = QVBoxLayout(self)
@@ -89,7 +91,7 @@ class SettingsDialog(QDialog):
             "border-radius: 4px; padding: 6px; }}"
             "QPushButton:hover {{ background-color: #2980b9; }}".format(ACCENT_COLOR)
         )
-        close_btn.clicked.connect(self.accept)
+        close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn, alignment=Qt.AlignCenter)
 
     def _section_label(self, text):

@@ -2,77 +2,109 @@
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QPoint, QRect, QSize
 
-from .constants import (
-    LEFT, RIGHT, TOP, BOTTOM,
-    TAB_W, TAB_H, PANEL_WIDTH,
-    HEADER_HEIGHT, BOTTOM_BAR_HEIGHT, SHORTCUT_ITEM_HEIGHT,
-    MIN_PANEL_LENGTH, MAX_PANEL_RATIO,
-)
+from . import constants as C
+from .constants import LEFT, RIGHT, TOP, BOTTOM
+from .scaling import s
+from .logger import get_logger
+
+_log = get_logger("dock_engine")
+
+
+def TAB_W():
+    return s(C.TAB_W)
+
+
+def TAB_H():
+    return s(C.TAB_H)
+
+
+def PANEL_WIDTH():
+    return s(C.PANEL_WIDTH)
+
+
+def _min_panel_length():
+    return s(C.MIN_PANEL_LENGTH)
 
 
 def get_screens():
     """Return list of (index, available_geometry QRect) for all screens."""
-    return [(i, s.availableGeometry()) for i, s in enumerate(QApplication.screens())]
+    screens = [(i, s.availableGeometry()) for i, s in enumerate(QApplication.screens())]
+    if not screens:
+        _log.warning("No screens detected, using fallback 1920x1080")
+        screens = [(0, QRect(0, 0, 1920, 1080))]
+    return screens
+
+
+def _find_containing_screen(center, screens):
+    """Find which screen contains the center point. Falls back to nearest screen."""
+    cx, cy = center.x(), center.y()
+
+    # First: exact containment check
+    for idx, rect in screens:
+        if rect.contains(center):
+            return idx, rect
+
+    # Fallback: nearest screen center
+    best_idx = 0
+    best_dist = float("inf")
+    for idx, rect in screens:
+        dx = cx - rect.center().x()
+        dy = cy - rect.center().y()
+        dist = dx * dx + dy * dy
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = idx
+
+    return best_idx, screens[best_idx][1]
 
 
 def find_nearest_edge(center, screens=None):
-    """Find the nearest screen edge for a given center point.
-
-    Returns (edge, screen_index, offset).
-    offset is 0.0-1.0 position along the edge.
-    """
+    """Find nearest edge of the CURRENT screen only. Returns (edge, screen_index, offset 0.0-1.0)."""
     if screens is None:
         screens = get_screens()
 
-    best_edge = LEFT
-    best_screen = 0
-    best_dist = float("inf")
-
     cx, cy = center.x(), center.y()
 
-    for idx, rect in screens:
-        distances = {
-            LEFT: abs(cx - rect.left()),
-            RIGHT: abs(cx - rect.right()),
-            TOP: abs(cy - rect.top()),
-            BOTTOM: abs(cy - rect.bottom()),
-        }
-        for edge, dist in distances.items():
-            if dist < best_dist:
-                best_dist = dist
-                best_edge = edge
-                best_screen = idx
+    # Step 1: determine which screen the window is on
+    screen_idx, rect = _find_containing_screen(center, screens)
 
-    # Calculate offset along the edge
-    _, rect = screens[best_screen]
+    # Step 2: find nearest edge of THAT screen only
+    distances = {
+        LEFT: abs(cx - rect.left()),
+        RIGHT: abs(cx - rect.right()),
+        TOP: abs(cy - rect.top()),
+        BOTTOM: abs(cy - rect.bottom()),
+    }
+    best_edge = min(distances, key=distances.get)
+
+    # Step 3: calculate offset along the edge
     if best_edge in (LEFT, RIGHT):
         offset = (cy - rect.top()) / max(1, rect.height())
     else:
         offset = (cx - rect.left()) / max(1, rect.width())
     offset = max(0.0, min(1.0, offset))
 
-    return best_edge, best_screen, offset
+    return best_edge, screen_idx, offset
 
 
 def calc_panel_length(num_shortcuts):
-    """Content-driven panel length."""
-    return HEADER_HEIGHT + (num_shortcuts * SHORTCUT_ITEM_HEIGHT) + BOTTOM_BAR_HEIGHT + 12
+    return s(C.HEADER_HEIGHT) + (num_shortcuts * s(C.SHORTCUT_ITEM_HEIGHT)) + s(C.BOTTOM_BAR_HEIGHT) + s(12)
 
 
 def get_panel_size(edge, num_shortcuts, screen_rect):
-    """Return QSize for the panel. Always vertical layout (PANEL_WIDTH wide, height grows)."""
+    """Always vertical layout (PANEL_WIDTH wide, height grows with shortcuts)."""
     content = calc_panel_length(num_shortcuts)
-    max_h = int(screen_rect.height() * MAX_PANEL_RATIO)
-    h = max(MIN_PANEL_LENGTH, min(content, max_h))
-    return QSize(PANEL_WIDTH, h)
+    max_h = int(screen_rect.height() * C.MAX_PANEL_RATIO)
+    h = max(_min_panel_length(), min(content, max_h))
+    return QSize(PANEL_WIDTH(), h)
 
 
 def get_tab_rect(edge, offset, screen_rect):
-    """Return QRect for the tab at the given edge and offset."""
+    """QRect for the tab at given edge and offset."""
     if edge in (LEFT, RIGHT):
-        tw, th = TAB_W, TAB_H
+        tw, th = TAB_W(), TAB_H()
     else:
-        tw, th = TAB_H, TAB_W
+        tw, th = TAB_H(), TAB_W()
 
     if edge == LEFT:
         x = screen_rect.left()
@@ -97,7 +129,7 @@ def get_tab_rect(edge, offset, screen_rect):
 
 
 def get_panel_rect(edge, offset, num_shortcuts, screen_rect):
-    """Return QRect for the expanded panel, anchored to where the tab would be."""
+    """QRect for expanded panel, anchored to tab position."""
     size = get_panel_size(edge, num_shortcuts, screen_rect)
     pw, ph = size.width(), size.height()
     tab = get_tab_rect(edge, offset, screen_rect)
@@ -117,7 +149,6 @@ def get_panel_rect(edge, offset, num_shortcuts, screen_rect):
     else:
         x, y = screen_rect.left(), screen_rect.top()
 
-    # Clamp to screen
     x = max(screen_rect.left(), min(x, screen_rect.right() - pw + 1))
     y = max(screen_rect.top(), min(y, screen_rect.bottom() - ph + 1))
 

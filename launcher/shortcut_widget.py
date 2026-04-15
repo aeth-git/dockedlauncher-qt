@@ -1,66 +1,118 @@
-"""Individual shortcut item widget with hover, click, drag-off-to-remove."""
+"""Shortcut item with animated hover, drag-off-to-remove, and custom painting."""
 import os
 
-from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QMenu, QApplication
-from PyQt5.QtCore import Qt, QPoint, QMimeData, QSize, pyqtSignal
-from PyQt5.QtGui import QDrag, QPixmap, QPainter, QFont, QColor, QCursor
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QLabel, QMenu
+from PyQt5.QtCore import Qt, QPoint, QMimeData, QSize, pyqtSignal, pyqtProperty, QPropertyAnimation, QEasingCurve
+from PyQt5.QtGui import QDrag, QPixmap, QPainter, QFont, QColor, QCursor, QPen, QPainterPath
 
-from .icon_provider import get_icon
-from .constants import ICON_SIZE, SHORTCUT_ITEM_HEIGHT, HOVER_COLOR, DARK_ITEM_BG, ACCENT_COLOR, TEXT_PRIMARY, DARK_BORDER
+from .icon_provider import get_pixmap
+from . import constants as C
+from .constants import (
+    ICON_SIZE, SHORTCUT_ITEM_HEIGHT, ACCENT_COLOR,
+    TEXT_PRIMARY, TEXT_SECONDARY, HOVER_FADE_MS,
+    FONT_FAMILY, FONT_SIZE_ITEM, GLASS_BG_SOLID,
+)
+from .scaling import s
 
 
 class ShortcutItem(QWidget):
-    """A single shortcut entry: icon + label with interactions."""
+    """Single shortcut: icon + label with smooth animated hover."""
 
-    removed = pyqtSignal(int)       # emitted with index when removed
-    moved = pyqtSignal(int, int)    # emitted with (index, direction) for reorder
-    launched = pyqtSignal(str)      # emitted with path when clicked
+    removed = pyqtSignal(int)
+    moved = pyqtSignal(int, int)
+    launched = pyqtSignal(str)
 
     def __init__(self, index, path, name, parent=None):
         super().__init__(parent)
         self.index = index
         self.path = path
         self.name = name
-
-        self.setFixedHeight(SHORTCUT_ITEM_HEIGHT)
-        self.setCursor(Qt.PointingHandCursor)
-        self._default_style = "ShortcutItem, ShortcutItem * {{ background-color: transparent; border-radius: 6px; }}"
-        self._hover_style = "ShortcutItem, ShortcutItem * {{ background-color: {}; border-radius: 6px; }}".format(HOVER_COLOR)
-        self.setStyleSheet(self._default_style)
-
+        self._bg_alpha = 0.0
         self._drag_start = None
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(8)
+        icon_sz = s(C.ICON_SIZE)
+        self.setFixedHeight(s(C.SHORTCUT_ITEM_HEIGHT))
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_Hover, True)
 
-        # Icon - get largest available, then scale down to fit with smooth transform
-        icon = get_icon(path, ICON_SIZE)
+        # Hover animation - snappy transition
+        self._hover_anim = QPropertyAnimation(self, b"bgAlpha")
+        self._hover_anim.setDuration(80)
+        self._hover_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(s(10), s(4), s(10), s(4))
+        layout.setSpacing(s(10))
+
+        # Icon from cached 256x256 pixmap, scaled down with smooth transform
+        source_pixmap = get_pixmap(path)
         icon_label = QLabel()
-        # Request large pixmap for best quality source
-        pixmap = icon.pixmap(QSize(256, 256))
-        # Scale to display size with smooth filtering
-        scaled = pixmap.scaled(
-            QSize(ICON_SIZE, ICON_SIZE),
+        # Use devicePixelRatio for retina sharpness: render at 2x, display at icon_sz
+        dpr = 2.0
+        hi_res_sz = int(icon_sz * dpr)
+        scaled = source_pixmap.scaled(
+            QSize(hi_res_sz, hi_res_sz),
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        scaled.setDevicePixelRatio(dpr)
         icon_label.setPixmap(scaled)
-        icon_label.setFixedSize(ICON_SIZE, ICON_SIZE)
-        icon_label.setScaledContents(False)
+        icon_label.setFixedSize(icon_sz, icon_sz)
+        icon_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(icon_label)
 
-        # Name
+        # Name label - bright white, readable, scaled font
         name_label = QLabel(name)
-        name_label.setStyleSheet("color: {};".format(TEXT_PRIMARY))
-        name_label.setFont(QFont("Segoe UI", 8))
+        name_label.setStyleSheet(
+            "QLabel {{ color: #ffffff; background: transparent; "
+            "font-family: {}; font-size: {}px; font-weight: 500; }}".format(FONT_FAMILY, s(11))
+        )
+        name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(name_label, 1)
 
+    # ---- Animated hover via custom property ----
+
+    def _get_bg_alpha(self):
+        return self._bg_alpha
+
+    def _set_bg_alpha(self, value):
+        self._bg_alpha = value
+        self.update()
+
+    bgAlpha = pyqtProperty(float, _get_bg_alpha, _set_bg_alpha)
+
+    def paintEvent(self, event):
+        """Custom paint: rounded rect with animated alpha for hover."""
+        if self._bg_alpha > 0.005:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            # Accent color at variable alpha
+            alpha = int(self._bg_alpha * 50)
+            color = QColor(59, 130, 246, alpha)
+            painter.setBrush(color)
+            # Subtle border at higher alpha
+            if self._bg_alpha > 0.3:
+                border_alpha = int(self._bg_alpha * 30)
+                painter.setPen(QPen(QColor(59, 130, 246, border_alpha), 1))
+            else:
+                painter.setPen(Qt.NoPen)
+            rect = self.rect().adjusted(2, 1, -2, -1)
+            painter.drawRoundedRect(rect, 8, 8)
+            painter.end()
+
     def enterEvent(self, event):
-        self.setStyleSheet(self._hover_style)
+        self._hover_anim.stop()
+        self._hover_anim.setStartValue(self._bg_alpha)
+        self._hover_anim.setEndValue(1.0)
+        self._hover_anim.start()
 
     def leaveEvent(self, event):
-        self.setStyleSheet(self._default_style)
+        self._hover_anim.stop()
+        self._hover_anim.setStartValue(self._bg_alpha)
+        self._hover_anim.setEndValue(0.0)
+        self._hover_anim.start()
+
+    # ---- Click / Drag ----
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -72,43 +124,48 @@ class ShortcutItem(QWidget):
         if (event.pos() - self._drag_start).manhattanLength() < 8:
             return
 
-        # Start drag-off-to-remove
         drag = QDrag(self)
         mime = QMimeData()
         mime.setText(self.path)
         drag.setMimeData(mime)
 
-        # Create ghost pixmap
-        ghost = QPixmap(160, 30)
-        ghost.fill(QColor(DARK_ITEM_BG))
+        # Ghost pixmap
+        ghost = QPixmap(180, 32)
+        ghost.fill(QColor(0, 0, 0, 0))
         painter = QPainter(ghost)
-        painter.setPen(QColor("white"))
-        painter.setFont(QFont("Segoe UI", 10))
-        painter.drawText(ghost.rect(), Qt.AlignCenter, self.name)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor(30, 41, 59, 220))
+        painter.setPen(QPen(QColor(59, 130, 246, 100), 1))
+        painter.drawRoundedRect(ghost.rect().adjusted(1, 1, -1, -1), 6, 6)
+        painter.setPen(QColor(TEXT_PRIMARY))
+        painter.setFont(QFont("Segoe UI", 9))
+        painter.drawText(ghost.rect().adjusted(10, 0, -10, 0), Qt.AlignVCenter, self.name)
         painter.end()
         drag.setPixmap(ghost)
-        drag.setHotSpot(QPoint(80, 15))
+        drag.setHotSpot(QPoint(90, 16))
 
-        result = drag.exec_(Qt.MoveAction)
+        drag.exec_(Qt.MoveAction)
 
-        # If drag ended outside the main window, remove this shortcut
         cursor_pos = QCursor.pos()
         main_win = self.window()
-        if main_win:
-            win_rect = main_win.geometry()
-            if not win_rect.contains(cursor_pos):
-                self.removed.emit(self.index)
+        if main_win and not main_win.geometry().contains(cursor_pos):
+            self.removed.emit(self.index)
 
         self._drag_start = None
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._drag_start is not None:
-            # Normal click (no drag) - launch
             self.launched.emit(self.path)
         self._drag_start = None
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu {{ background-color: {}; color: {}; border: 1px solid rgba(148,163,184,0.2); border-radius: 6px; padding: 4px; }}"
+            "QMenu::item:selected {{ background-color: rgba(59,130,246,0.3); border-radius: 4px; }}".format(
+                GLASS_BG_SOLID, TEXT_PRIMARY
+            )
+        )
         move_up = menu.addAction("Move Up")
         move_down = menu.addAction("Move Down")
         menu.addSeparator()
@@ -121,14 +178,3 @@ class ShortcutItem(QWidget):
             self.moved.emit(self.index, 1)
         elif action == remove:
             self.removed.emit(self.index)
-
-    def update_theme(self, is_dark):
-        bg = DARK_ITEM_BG if is_dark else "#e8e8e8"
-        hover = HOVER_COLOR if is_dark else "#a0c4e8"
-        text_color = "white" if is_dark else "black"
-        self._default_style = "background-color: {}; border-radius: 6px;".format(bg)
-        self._hover_style = "background-color: {}; border-radius: 6px;".format(hover)
-        self.setStyleSheet(self._default_style)
-        for label in self.findChildren(QLabel):
-            if not label.pixmap():
-                label.setStyleSheet("color: {}; background: transparent;".format(text_color))
