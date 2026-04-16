@@ -8,11 +8,11 @@ from PyQt5.QtWidgets import (
     QScrollArea, QFileDialog, QApplication, QGraphicsDropShadowEffect,
 )
 from PyQt5.QtCore import (
-    Qt, QTimer, QPoint, QRect, QPropertyAnimation, QEasingCurve,
+    Qt, QTimer, QPoint, QPointF, QRect, QRectF, QPropertyAnimation, QEasingCurve,
     pyqtProperty,
 )
 from PyQt5.QtGui import (
-    QFont, QCursor, QColor, QPainter, QLinearGradient, QPen,
+    QFont, QCursor, QColor, QPainter, QLinearGradient, QPen, QPainterPath,
 )
 
 from .config import load_config, save_config
@@ -71,6 +71,192 @@ class GlowTab(QWidget):
         painter.end()
 
 
+# ---- Sci-Fi Bottom Bar ----
+
+class _BottomBar(QWidget):
+    """Custom-painted bottom toolbar with sci-fi styling."""
+
+    def __init__(self, on_add, on_settings, parent=None):
+        super().__init__(parent)
+        self._t = 0.0
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 4, 10, 4)
+
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(28, 22)
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet(
+            "QPushButton { background: rgba(60,160,255,0.1); color: rgba(140,200,255,0.8); "
+            "border: 1px solid rgba(60,160,255,0.3); border-radius: 4px; "
+            "font-size: 14px; font-weight: bold; }"
+            "QPushButton:hover { background: rgba(60,160,255,0.3); color: white; "
+            "border-color: rgba(100,180,255,0.6); }"
+        )
+        add_btn.clicked.connect(on_add)
+        layout.addWidget(add_btn)
+
+        layout.addStretch()
+
+        settings_btn = QPushButton("\u2699")
+        settings_btn.setFixedSize(28, 22)
+        settings_btn.setCursor(Qt.PointingHandCursor)
+        settings_btn.setStyleSheet(
+            "QPushButton { background: rgba(60,160,255,0.1); color: rgba(140,200,255,0.8); "
+            "border: 1px solid rgba(60,160,255,0.3); border-radius: 4px; font-size: 13px; }"
+            "QPushButton:hover { background: rgba(60,160,255,0.3); color: white; "
+            "border-color: rgba(100,180,255,0.6); }"
+        )
+        settings_btn.clicked.connect(on_settings)
+        layout.addWidget(settings_btn)
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_timer.start(40)
+
+    def _tick(self):
+        self._t += 0.04
+        if self.isVisible():
+            self.update()
+
+    def paintEvent(self, event):
+        import math
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Dark gradient background
+        grad = QLinearGradient(0, 0, 0, h)
+        grad.setColorAt(0.0, QColor(15, 25, 45))
+        grad.setColorAt(0.5, QColor(20, 32, 52))
+        grad.setColorAt(1.0, QColor(25, 40, 65))
+        painter.fillRect(0, 0, w, h, grad)
+
+        # Top separator: energy line
+        pulse = 0.6 + 0.4 * math.sin(self._t * 2.8 + 1)
+        a = int(60 * pulse)
+        line_grad = QLinearGradient(0, 0, w, 0)
+        line_grad.setColorAt(0.0, QColor(60, 160, 255, 0))
+        line_grad.setColorAt(0.3, QColor(60, 160, 255, a))
+        line_grad.setColorAt(0.5, QColor(180, 220, 255, int(a * 1.3)))
+        line_grad.setColorAt(0.7, QColor(60, 160, 255, a))
+        line_grad.setColorAt(1.0, QColor(60, 160, 255, 0))
+        painter.setPen(QPen(line_grad, 1))
+        painter.drawLine(0, 0, w, 0)
+
+        # Bottom highlight
+        painter.setPen(QPen(QColor(100, 170, 255, 30), 1))
+        painter.drawLine(0, h - 1, w, h - 1)
+
+        painter.end()
+
+
+# ---- Sci-Fi Header Bar ----
+
+class _HeaderBar(QWidget):
+    """Custom-painted header with chrome gradient, animated scan line, and glow title."""
+
+    def __init__(self, on_close, parent=None):
+        super().__init__(parent)
+        self._on_close = on_close
+        self._t = 0.0  # animation time
+
+        # Close button overlaid on top
+        self._close_btn = QPushButton("\u2715", self)
+        self._close_btn.setFixedSize(20, 20)
+        self._close_btn.setCursor(Qt.PointingHandCursor)
+        self._close_btn.setToolTip("Close DockedLauncher")
+        self._close_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: rgba(255,255,255,0.5); "
+            "border: none; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { color: #ff4444; }"
+        )
+        self._close_btn.clicked.connect(on_close)
+
+        # Animation timer
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_timer.start(40)  # ~25fps
+
+    def _tick(self):
+        self._t += 0.04
+        if self.isVisible():
+            self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Position close button at top-right
+        self._close_btn.move(self.width() - 24, (self.height() - 20) // 2)
+
+    def paintEvent(self, event):
+        import math
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Chrome gradient background
+        grad = QLinearGradient(0, 0, 0, h)
+        grad.setColorAt(0.0, QColor(35, 50, 75))
+        grad.setColorAt(0.4, QColor(25, 38, 60))
+        grad.setColorAt(0.6, QColor(20, 32, 52))
+        grad.setColorAt(1.0, QColor(15, 25, 45))
+        painter.fillRect(0, 0, w, h, grad)
+
+        # Top highlight edge (thin bright line)
+        painter.setPen(QPen(QColor(120, 180, 255, 60), 1))
+        painter.drawLine(0, 0, w, 0)
+
+        # Animated horizontal scan line (sweeps left to right, repeats)
+        scan_x = (self._t * 80) % (w + 60) - 30
+        scan_grad = QLinearGradient(scan_x - 30, 0, scan_x + 30, 0)
+        scan_grad.setColorAt(0.0, QColor(80, 180, 255, 0))
+        scan_grad.setColorAt(0.5, QColor(80, 180, 255, 50))
+        scan_grad.setColorAt(1.0, QColor(80, 180, 255, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(scan_grad)
+        painter.drawRect(0, 0, w, h)
+
+        # Bottom separator: glowing energy line
+        pulse = 0.6 + 0.4 * math.sin(self._t * 3)
+        line_grad = QLinearGradient(0, 0, w, 0)
+        a = int(80 * pulse)
+        line_grad.setColorAt(0.0, QColor(60, 160, 255, 0))
+        line_grad.setColorAt(0.3, QColor(60, 160, 255, a))
+        line_grad.setColorAt(0.5, QColor(180, 220, 255, int(a * 1.5)))
+        line_grad.setColorAt(0.7, QColor(60, 160, 255, a))
+        line_grad.setColorAt(1.0, QColor(60, 160, 255, 0))
+        painter.setPen(QPen(line_grad, 1.5))
+        painter.drawLine(0, h - 1, w, h - 1)
+
+        # Title text: "LAUNCHER" with glow
+        painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        text_x = 12
+        text_y = h // 2 + 4
+
+        # Text glow (drawn slightly larger behind)
+        glow_a = int(40 * pulse)
+        painter.setPen(QColor(80, 180, 255, glow_a))
+        for ox, oy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            painter.drawText(text_x + ox, text_y + oy, "L A U N C H E R")
+
+        # Main text
+        text_grad = QLinearGradient(text_x, 0, text_x + 120, 0)
+        text_grad.setColorAt(0.0, QColor(140, 180, 220))
+        text_grad.setColorAt(0.5, QColor(200, 220, 255))
+        text_grad.setColorAt(1.0, QColor(140, 180, 220))
+        painter.setPen(QPen(text_grad, 1))
+        painter.drawText(text_x, text_y, "L A U N C H E R")
+
+        # Small decorative dots (status indicators)
+        for i, dx in enumerate([w - 50, w - 58, w - 66]):
+            dot_pulse = 0.5 + 0.5 * math.sin(self._t * 2.5 + i * 1.2)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(60, 200, 120, int(160 * dot_pulse)))
+            painter.drawEllipse(QPointF(dx, h // 2), 2, 2)
+
+        painter.end()
+
+
 # ---- Main Window ----
 
 class DockedLauncher(QWidget):
@@ -87,6 +273,8 @@ class DockedLauncher(QWidget):
         self._drag_start = None
         self._is_dragging = False
         self._acrylic_enabled = False
+        self._glow_pad = 2  # tiny breathing room, no external glow
+        self._clamp_val = 0.0
 
         # Window flags
         self.setWindowFlags(
@@ -110,6 +298,37 @@ class DockedLauncher(QWidget):
         self._poll_timer = QTimer(self)
         self._poll_timer.timeout.connect(self._check_hover)
         self._poll_timer.start(HOVER_POLL_MS)
+
+        # Tendril animation timer (~30fps repaint when expanded)
+        self._tendril_timer = QTimer(self)
+        self._tendril_timer.timeout.connect(self._tendril_tick)
+        self._tendril_timer.start(33)
+
+    def _tendril_tick(self):
+        if self._is_expanded:
+            self.update()
+
+    # ---- Acrylic Blur ----
+
+    # ---- Clamp bracket animation property ----
+
+    def _get_clamp(self):
+        return self._clamp_val
+
+    def _set_clamp(self, v):
+        self._clamp_val = v
+        self.update()
+
+    _clamp_progress = pyqtProperty(float, _get_clamp, _set_clamp)
+
+    def _animate_clamps(self, target, duration=300):
+        anim = QPropertyAnimation(self, b"_clamp_progress")
+        anim.setDuration(duration)
+        anim.setStartValue(self._clamp_val)
+        anim.setEndValue(target)
+        anim.setEasingCurve(QEasingCurve.OutBack if target > 0.5 else QEasingCurve.InCubic)
+        self._clamp_anim = anim  # prevent GC
+        anim.start()
 
     # ---- Acrylic Blur ----
 
@@ -172,47 +391,30 @@ class DockedLauncher(QWidget):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(0)
 
-        # Header
-        self._header = QWidget()
-        self._header.setFixedHeight(s(C.HEADER_HEIGHT))
-        self._header.setStyleSheet("background-color: {};".format(HEADER_COLOR_SOLID))
-        self._header.setAutoFillBackground(True)
+        # Header - custom painted sci-fi bar
+        self._header = _HeaderBar(self._on_close_click)
+        self._header.setFixedHeight(s(C.HEADER_HEIGHT) + 4)
         self._header.setCursor(Qt.OpenHandCursor)
-        header_layout = QHBoxLayout(self._header)
-        header_layout.setContentsMargins(12, 0, 12, 0)
-        title = QLabel("LAUNCHER")
-        title.setStyleSheet(
-            "color: {}; font-family: {}; font-weight: 600; font-size: {}px; "
-            "letter-spacing: 2px; background: transparent;".format(
-                TEXT_MUTED, FONT_FAMILY, FONT_SIZE_TITLE
-            )
-        )
-        header_layout.addWidget(title)
         panel_layout.addWidget(self._header)
-
-        # Separator line
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: {};".format(GLASS_BORDER))
-        panel_layout.addWidget(sep)
 
         # Scroll area - explicit dark background
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # Sci-fi styled scroll area with dark glass background and glowing scrollbar
+        dark = "#0d1626"
         self._scroll.setStyleSheet(
             "QScrollArea {{ border: none; background-color: {0}; }}"
             "QScrollArea > QWidget > QWidget {{ background-color: {0}; }}"
-            "QScrollBar:vertical {{ background: {0}; width: 6px; margin: 2px; border: none; }}"
-            "QScrollBar::handle:vertical {{ background: rgba(148,163,184,0.4); border-radius: 3px; min-height: 20px; }}"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; background: transparent; }}"
-            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: {0}; }}".format(GLASS_BG_SOLID)
+            "QScrollBar:vertical {{ background: {0}; width: 5px; margin: 2px; border: none; }}"
+            "QScrollBar::handle:vertical {{ background: rgba(80,170,255,0.35); border-radius: 2px; min-height: 20px; }}"
+            "QScrollBar::handle:vertical:hover {{ background: rgba(80,170,255,0.6); }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: {0}; }}".format(dark)
         )
         self._shortcut_container = QWidget()
-        self._shortcut_container.setStyleSheet(
-            "background-color: {};".format(GLASS_BG_SOLID)
-        )
+        self._shortcut_container.setStyleSheet("background-color: {};".format(dark))
         self._shortcut_container.setAutoFillBackground(True)
         self._shortcut_layout = QVBoxLayout(self._shortcut_container)
         self._shortcut_layout.setContentsMargins(6, 6, 6, 6)
@@ -221,49 +423,12 @@ class DockedLauncher(QWidget):
         self._scroll.setWidget(self._shortcut_container)
         panel_layout.addWidget(self._scroll, 1)
 
-        # Bottom separator
-        sep2 = QWidget()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background-color: {};".format(GLASS_BORDER))
-        panel_layout.addWidget(sep2)
-
-        # Bottom bar - solid dark
-        bottom = QWidget()
-        bottom.setFixedHeight(s(C.BOTTOM_BAR_HEIGHT))
-        bottom.setStyleSheet("background-color: {};".format(GLASS_BG_SOLID))
-        bottom.setAutoFillBackground(True)
-        bottom_layout = QHBoxLayout(bottom)
-        bottom_layout.setContentsMargins(8, 4, 8, 4)
-
-        add_btn = QPushButton("+")
-        add_btn.setFixedSize(26, 22)
-        add_btn.setStyleSheet(self._button_style())
-        add_btn.setFont(QFont(FONT_FAMILY, FONT_SIZE_BUTTON, QFont.Bold))
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.clicked.connect(self._on_add_click)
-        bottom_layout.addWidget(add_btn)
-
-        bottom_layout.addStretch()
-
-        settings_btn = QPushButton("\u2699")
-        settings_btn.setFixedSize(26, 22)
-        settings_btn.setStyleSheet(self._button_style())
-        settings_btn.setFont(QFont(FONT_FAMILY, FONT_SIZE_BUTTON))
-        settings_btn.setCursor(Qt.PointingHandCursor)
-        settings_btn.clicked.connect(self._on_settings_click)
-        bottom_layout.addWidget(settings_btn)
-
+        # Bottom bar - sci-fi styled (has its own top energy line)
+        bottom = _BottomBar(self._on_add_click, self._on_settings_click)
+        bottom.setFixedHeight(s(C.BOTTOM_BAR_HEIGHT) + 2)
         panel_layout.addWidget(bottom)
 
         self._populate_shortcuts()
-
-    def _button_style(self):
-        return (
-            "QPushButton {{ background: transparent; color: {1}; "
-            "border: 1px solid {2}; border-radius: 4px; padding: 1px; }}"
-            "QPushButton:hover {{ background: rgba(59,130,246,0.25); color: white; "
-            "border-color: {0}; }}"
-        ).format(ACCENT_COLOR, TEXT_SECONDARY, GLASS_BORDER)
 
     def paintEvent(self, event):
         """Paint the glassmorphism background."""
@@ -271,16 +436,34 @@ class DockedLauncher(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         if self._is_expanded:
-            # Panel background
-            if self._acrylic_enabled:
-                bg = QColor(15, 23, 42, 225)
-            else:
-                bg = QColor(15, 23, 42, 255)
-            painter.setBrush(bg)
-            # Bright white border around entire expanded panel
-            painter.setPen(QPen(QColor(255, 255, 255, 230), 2))
-            painter.drawRoundedRect(self.rect().adjusted(1, 1, -2, -2), 10, 10)
+            rect = self.rect()
 
+            from PyQt5.QtCore import QPointF, QRectF
+
+            gp = self._glow_pad
+            panel_rect = rect.adjusted(gp, gp, -gp, -gp)
+            pr = QRectF(panel_rect)
+
+            # Panel background with glass gradient (top lighter, bottom deeper)
+            bg_grad = QLinearGradient(panel_rect.topLeft(), panel_rect.bottomLeft())
+            bg_grad.setColorAt(0.0, QColor(22, 34, 58, 255))
+            bg_grad.setColorAt(0.5, QColor(15, 23, 42, 255))
+            bg_grad.setColorAt(1.0, QColor(12, 20, 38, 255))
+            painter.setBrush(bg_grad)
+            painter.setPen(QPen(QColor(120, 170, 220, 80), 1))
+            painter.drawRoundedRect(panel_rect, 10, 10)
+
+            # Glass reflection highlight along the top edge (inside the panel)
+            reflect_rect = QRectF(panel_rect.left() + 8, panel_rect.top() + 1,
+                                  panel_rect.width() - 16, 18)
+            reflect_grad = QLinearGradient(reflect_rect.topLeft(), reflect_rect.bottomLeft())
+            reflect_grad.setColorAt(0.0, QColor(255, 255, 255, 35))
+            reflect_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(reflect_grad)
+            painter.drawRoundedRect(reflect_rect, 6, 6)
+
+            # ---- Living energy tethers reaching toward docked wall ----
         painter.end()
 
     # ---- Shortcut List ----
@@ -365,7 +548,8 @@ class DockedLauncher(QWidget):
             self._is_expanded = False
             return
 
-        # Animate shrink; show tab on top during animation
+        # Retract clamps first, then animate shrink
+        self._animate_clamps(0.0, duration=150)
         self._tab_widget.set_edge(self._edge)
         self._tab_widget.setGeometry(0, 0, target.width(), target.height())
         self._tab_widget.show()
@@ -387,8 +571,12 @@ class DockedLauncher(QWidget):
         num = len(self.config.get("shortcuts", []))
         target = de.get_panel_rect(self._edge, offset, num, screen)
 
-        # Pre-size and show the panel widget so its content appears immediately
-        self._panel_widget.setGeometry(0, 0, target.width(), target.height())
+        # Expand window by glow_pad on each side so glow renders outside the panel
+        gp = self._glow_pad
+        target.adjust(-gp, -gp, gp, gp)
+
+        # Panel widget sits inside the glow padding
+        self._panel_widget.setGeometry(gp, gp, target.width() - 2 * gp, target.height() - 2 * gp)
         self._panel_widget.show()
         self._tab_widget.hide()
         self._is_animating = True
@@ -397,9 +585,10 @@ class DockedLauncher(QWidget):
             self._is_animating = False
             self._is_expanded = True
             self.update()
+            # Clamps engage after panel arrives (like latches clicking shut)
+            self._animate_clamps(1.0, duration=350)
 
         self._animate_to(target, duration=160, on_done=on_done)
-        # Mark expanded immediately so hover poll doesn't re-trigger
         self._is_expanded = True
 
     def _animate_to(self, target_rect, duration=160, on_done=None):
@@ -409,8 +598,12 @@ class DockedLauncher(QWidget):
         anim.setStartValue(self.geometry())
         anim.setEndValue(target_rect)
         anim.setEasingCurve(QEasingCurve.OutCubic)
-        # Keep panel widget sized to current animated geometry
-        anim.valueChanged.connect(lambda r: self._panel_widget.setGeometry(0, 0, r.width(), r.height()) if self._panel_widget.isVisible() else None)
+        # Keep panel widget inside the glow padding during animation
+        gp = self._glow_pad
+        def _sync_panel(r):
+            if self._panel_widget.isVisible():
+                self._panel_widget.setGeometry(gp, gp, r.width() - 2 * gp, r.height() - 2 * gp)
+        anim.valueChanged.connect(_sync_panel)
         if on_done:
             anim.finished.connect(on_done)
         self._geom_anim = anim
@@ -423,8 +616,10 @@ class DockedLauncher(QWidget):
         offset = self.config.get("edge_offset", 0.5)
         num = len(self.config.get("shortcuts", []))
         rect = de.get_panel_rect(self._edge, offset, num, screen)
+        gp = self._glow_pad
+        rect.adjust(-gp, -gp, gp, gp)
         self.setGeometry(rect)
-        self._panel_widget.setGeometry(0, 0, rect.width(), rect.height())
+        self._panel_widget.setGeometry(gp, gp, rect.width() - 2 * gp, rect.height() - 2 * gp)
 
     # ---- Hover Polling ----
 
@@ -456,8 +651,10 @@ class DockedLauncher(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self._is_expanded:
+            # Map the click position into the panel widget's coordinate space
+            panel_pos = self._panel_widget.mapFromParent(event.pos())
             header_geo = self._header.geometry()
-            if header_geo.contains(event.pos()):
+            if header_geo.contains(panel_pos):
                 self._drag_start = event.globalPos() - self.frameGeometry().topLeft()
                 self._is_dragging = True
                 self._header.setCursor(Qt.ClosedHandCursor)
@@ -523,6 +720,18 @@ class DockedLauncher(QWidget):
         self._settings_dialog.show()
         self._settings_dialog.raise_()
         self._settings_dialog.activateWindow()
+
+    def _on_close_click(self):
+        """User explicitly closed the app. Write quit flag so watchdog exits too."""
+        import os, sys
+        from .constants import CONFIG_DIR
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(os.path.join(CONFIG_DIR, "quit.flag"), "w") as f:
+                f.write("user")
+        except Exception:
+            pass
+        QApplication.quit()
 
     def _apply_settings(self, new_config):
         self.config = new_config

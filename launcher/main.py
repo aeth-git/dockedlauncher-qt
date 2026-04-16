@@ -1,4 +1,4 @@
-"""Entry point for DockedLauncher (PyQt5) with watchdog, mutex, and signal handling."""
+"""Entry point for DockedLauncher with Hydra defense system."""
 import argparse
 import atexit
 import ctypes
@@ -7,7 +7,7 @@ import sys
 import os
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 
 from .config import load_config, save_config
 from .constants import EDGES
@@ -18,10 +18,10 @@ _mutex_handle = None
 _log = None
 
 
-def _acquire_mutex():
-    """Create a named mutex for single-instance enforcement. Returns handle or None."""
+def _acquire_mutex(name_suffix=""):
+    """Windows named mutex for single-instance enforcement."""
     kernel32 = ctypes.windll.kernel32
-    mutex_name = "Global\\DockedLauncher_SingleInstance"
+    mutex_name = "Global\\DockedLauncher_SingleInstance" + name_suffix
     handle = kernel32.CreateMutexW(None, False, mutex_name)
     if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         kernel32.CloseHandle(handle)
@@ -37,7 +37,6 @@ def _release_mutex():
 
 
 def _on_signal(signum, frame):
-    """Handle SIGTERM/SIGINT gracefully."""
     if _log:
         _log.info("Received signal %d, shutting down", signum)
     app = QApplication.instance()
@@ -48,43 +47,64 @@ def _on_signal(signum, frame):
 def main():
     global _mutex_handle, _log
 
-    # Parse args first to check for --no-watchdog
     parser = argparse.ArgumentParser(description="DockedLauncher")
     parser.add_argument("--edge", choices=EDGES, default=None)
     parser.add_argument("--monitor", type=int, default=None)
     parser.add_argument("--no-watchdog", action="store_true",
-                        help="Run directly without watchdog (used internally)")
+                        help="Run directly without watchdog (internal)")
+    parser.add_argument("--role", choices=["app", "watchdog", "launcher"],
+                        default="launcher",
+                        help="Process role in Hydra defense system")
     args = parser.parse_args()
-
-    # If not --no-watchdog, launch via watchdog instead
-    if not args.no_watchdog:
-        from .watchdog import watchdog_main
-        extra = []
-        if args.edge:
-            extra.extend(["--edge", args.edge])
-        if args.monitor is not None:
-            extra.extend(["--monitor", str(args.monitor)])
-        watchdog_main(extra)
-        return
-
-    # ---- Direct app launch (called by watchdog with --no-watchdog) ----
 
     setup_logging()
     _log = get_logger("main")
-    _log.info("DockedLauncher starting")
 
-    # Single-instance check
-    _mutex_handle = _acquire_mutex()
+    extra_args = []
+    if args.edge:
+        extra_args.extend(["--edge", args.edge])
+    if args.monitor is not None:
+        extra_args.extend(["--monitor", str(args.monitor)])
+
+    # --- Role: launcher (default entry point) ---
+    # Bootstraps the Hydra, then exits. This is what the user runs.
+    if args.role == "launcher":
+        from .hydra import launch_hydra
+        _log.info("Launcher bootstrap starting Hydra")
+        launch_hydra(extra_args)
+        # Stay briefly so children can inherit + detach cleanly
+        import time as _t
+        _t.sleep(0.5)
+        return
+
+    # --- Role: watchdog ---
+    if args.role == "watchdog":
+        # Only one watchdog at a time
+        _mutex_handle = _acquire_mutex("_Watchdog")
+        if _mutex_handle is None:
+            _log.info("Watchdog already running, exiting")
+            return
+        atexit.register(_release_mutex)
+
+        from .hydra import watchdog_main
+        try:
+            watchdog_main(extra_args)
+        finally:
+            _release_mutex()
+        return
+
+    # --- Role: app (default when --no-watchdog is passed) ---
+    _log.info("DockedLauncher app starting")
+
+    _mutex_handle = _acquire_mutex("_App")
     if _mutex_handle is None:
-        _log.info("Another instance is already running, exiting")
+        _log.info("Another app instance is already running, exiting")
         sys.exit(0)
     atexit.register(_release_mutex)
 
-    # Signal handlers
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
 
-    # High-DPI scaling BEFORE QApplication
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
@@ -106,11 +126,17 @@ def main():
     launcher = DockedLauncher(config=config)
     launcher.show()
 
-    _log.info("DockedLauncher running (PID %d)", os.getpid())
+    # Heartbeat timer - writes our heartbeat + checks watchdog peer
+    from .hydra import app_heartbeat_loop
+    heartbeat_timer = QTimer()
+    heartbeat_timer.timeout.connect(app_heartbeat_loop)
+    heartbeat_timer.start(500)  # every 500ms
+
+    _log.info("DockedLauncher app running (PID %d)", os.getpid())
 
     exit_code = app.exec_()
 
-    _log.info("DockedLauncher shutting down (code %d)", exit_code)
+    _log.info("DockedLauncher app shutting down (code %d)", exit_code)
     save_config(launcher.config)
     _release_mutex()
     sys.exit(exit_code)

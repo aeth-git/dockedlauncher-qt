@@ -15,6 +15,60 @@ from .constants import (
 from .scaling import s
 
 
+class _IconCanvas(QWidget):
+    """Paints an app icon crisply with a subtle drop-shadow for depth."""
+
+    def __init__(self, path, size, parent=None):
+        super().__init__(parent)
+        self._size = size
+        self.setFixedSize(size, size)
+        # Render source at high-DPI (3x) then scale down for retina sharpness
+        src = get_pixmap(path)
+        target = int(size * 3)
+        if not src.isNull():
+            self._pix = src.scaled(
+                QSize(target, target),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        else:
+            self._pix = QPixmap(size, size)
+            self._pix.fill(Qt.transparent)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        sz = self._size
+        # Draw soft shadow slightly below and behind the icon (2 layers)
+        shadow_pix = self._pix.scaled(
+            QSize(sz, sz), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        # Create a tinted black silhouette for shadow
+        shadow_img = shadow_pix.toImage()
+        for layer, (ox, oy, alpha) in enumerate([(0, 2, 30), (0, 1, 50)]):
+            sh = QPixmap(shadow_pix.size())
+            sh.fill(Qt.transparent)
+            sp = QPainter(sh)
+            sp.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            sp.drawPixmap(0, 0, shadow_pix)
+            sp.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            sp.fillRect(sh.rect(), QColor(0, 0, 0, alpha))
+            sp.end()
+            painter.drawPixmap(ox, oy, sh)
+
+        # Draw the actual icon crisply on top
+        crisp = self._pix.scaled(
+            QSize(sz, sz), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        # Center in case aspect ratio changed
+        dx = (sz - crisp.width()) // 2
+        dy = (sz - crisp.height()) // 2
+        painter.drawPixmap(dx, dy, crisp)
+        painter.end()
+
+
 class ShortcutItem(QWidget):
     """Single shortcut: icon + label with smooth animated hover."""
 
@@ -44,22 +98,10 @@ class ShortcutItem(QWidget):
         layout.setContentsMargins(s(10), s(4), s(10), s(4))
         layout.setSpacing(s(10))
 
-        # Icon from cached 256x256 pixmap, scaled down with smooth transform
-        source_pixmap = get_pixmap(path)
-        icon_label = QLabel()
-        # Use devicePixelRatio for retina sharpness: render at 2x, display at icon_sz
-        dpr = 2.0
-        hi_res_sz = int(icon_sz * dpr)
-        scaled = source_pixmap.scaled(
-            QSize(hi_res_sz, hi_res_sz),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-        scaled.setDevicePixelRatio(dpr)
-        icon_label.setPixmap(scaled)
-        icon_label.setFixedSize(icon_sz, icon_sz)
-        icon_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        layout.addWidget(icon_label)
+        # Icon: painted icon with subtle drop shadow and hi-res rendering
+        icon_holder = _IconCanvas(path, icon_sz, self)
+        icon_holder.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout.addWidget(icon_holder)
 
         # Name label - bright white, readable, scaled font
         name_label = QLabel(name)
