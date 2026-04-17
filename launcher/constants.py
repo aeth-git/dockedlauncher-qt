@@ -11,7 +11,7 @@ BOTTOM = "bottom"
 EDGES = [LEFT, RIGHT, TOP, BOTTOM]
 
 # Tab dimensions
-TAB_W = 16
+TAB_W = 20
 TAB_H = 90
 
 # Panel dimensions

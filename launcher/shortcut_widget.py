@@ -156,6 +156,8 @@ class ShortcutItem(QWidget):
 
     # ---- Click / Drag ----
 
+    MIME_TYPE = "application/x-dockedlauncher-shortcut"
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._drag_start = event.pos()
@@ -168,7 +170,9 @@ class ShortcutItem(QWidget):
 
         drag = QDrag(self)
         mime = QMimeData()
-        mime.setText(self.path)
+        # Custom mime type carries the source index for reorder detection
+        mime.setData(self.MIME_TYPE, str(self.index).encode())
+        mime.setText(self.path)  # fallback for external drops
         drag.setMimeData(mime)
 
         # Ghost pixmap
@@ -177,7 +181,7 @@ class ShortcutItem(QWidget):
         painter = QPainter(ghost)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setBrush(QColor(30, 41, 59, 220))
-        painter.setPen(QPen(QColor(59, 130, 246, 100), 1))
+        painter.setPen(QPen(QColor(59, 130, 246, 180), 1))
         painter.drawRoundedRect(ghost.rect().adjusted(1, 1, -1, -1), 6, 6)
         painter.setPen(QColor(TEXT_PRIMARY))
         painter.setFont(QFont("Segoe UI", 9))
@@ -186,12 +190,16 @@ class ShortcutItem(QWidget):
         drag.setPixmap(ghost)
         drag.setHotSpot(QPoint(90, 16))
 
-        drag.exec_(Qt.MoveAction)
+        # Accept MoveAction (reorder) or IgnoreAction (drop outside)
+        result = drag.exec_(Qt.MoveAction)
 
-        cursor_pos = QCursor.pos()
-        main_win = self.window()
-        if main_win and not main_win.geometry().contains(cursor_pos):
-            self.removed.emit(self.index)
+        # If drop was accepted internally (reorder), container emits the signal.
+        # If drop was NOT accepted and cursor is outside main window, remove.
+        if result == Qt.IgnoreAction:
+            cursor_pos = QCursor.pos()
+            main_win = self.window()
+            if main_win and not main_win.geometry().contains(cursor_pos):
+                self.removed.emit(self.index)
 
         self._drag_start = None
 
@@ -220,3 +228,94 @@ class ShortcutItem(QWidget):
             self.moved.emit(self.index, 1)
         elif action == remove:
             self.removed.emit(self.index)
+
+
+class ShortcutContainer(QWidget):
+    """Container that accepts ShortcutItem drops for reordering with live indicator."""
+
+    reorder = pyqtSignal(int, int)  # (from_index, to_index)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._drop_line_y = None  # where to draw the drop indicator
+
+    def _compute_target_index(self, y):
+        """Return the insert index for a drop at the given y within this container."""
+        children = [
+            self.layout().itemAt(i).widget()
+            for i in range(self.layout().count())
+            if self.layout().itemAt(i).widget() is not None
+            and isinstance(self.layout().itemAt(i).widget(), ShortcutItem)
+        ]
+        for i, item in enumerate(children):
+            item_y = item.y() + item.height() / 2
+            if y < item_y:
+                return i, item.y()
+        # After all items - insert at end
+        if children:
+            last = children[-1]
+            return len(children), last.y() + last.height()
+        return 0, 0
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(ShortcutItem.MIME_TYPE):
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(ShortcutItem.MIME_TYPE):
+            _, line_y = self._compute_target_index(event.pos().y())
+            if line_y != self._drop_line_y:
+                self._drop_line_y = line_y
+                self.update()
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._drop_line_y = None
+        self.update()
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasFormat(ShortcutItem.MIME_TYPE):
+            event.ignore()
+            return
+        try:
+            from_index = int(bytes(event.mimeData().data(ShortcutItem.MIME_TYPE)).decode())
+        except (ValueError, TypeError):
+            event.ignore()
+            return
+
+        target_index, _ = self._compute_target_index(event.pos().y())
+        # If dragging down past self, list shortens by 1 after remove -> adjust
+        if target_index > from_index:
+            target_index -= 1
+
+        self._drop_line_y = None
+        self.update()
+
+        if target_index != from_index:
+            self.reorder.emit(from_index, target_index)
+        event.setDropAction(Qt.MoveAction)
+        event.accept()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._drop_line_y is not None:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            # Bright drop indicator line
+            pen = QPen(QColor(120, 200, 255, 220), 2)
+            painter.setPen(pen)
+            y = int(self._drop_line_y)
+            painter.drawLine(8, y, self.width() - 8, y)
+            # End caps (small circles)
+            painter.setBrush(QColor(180, 220, 255, 220))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPoint(8, y), 3, 3)
+            painter.drawEllipse(QPoint(self.width() - 8, y), 3, 3)
+            painter.end()

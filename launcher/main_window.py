@@ -40,34 +40,119 @@ _log = get_logger("main_window")
 # ---- Glow Tab ----
 
 class GlowTab(QWidget):
-    """Thin glowing tab with pulsing shadow effect."""
+    """Animated pill-shaped tab with chrome gradient, pulsing energy core, and scan line."""
 
     def __init__(self, edge, parent=None):
         super().__init__(parent)
         self._edge = edge
+        self._t = 0.0
         self.setAutoFillBackground(False)
+
+        self._anim = QTimer(self)
+        self._anim.timeout.connect(self._tick)
+        self._anim.start(40)  # ~25fps
+
+    def _tick(self):
+        self._t += 0.05
+        if self.isVisible():
+            self.update()
 
     def set_edge(self, edge):
         self._edge = edge
         self.update()
 
     def paintEvent(self, event):
+        import math
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.Antialiasing, True)
 
-        # Bright gradient for high visibility
-        if self._edge in (LEFT, RIGHT):
-            grad = QLinearGradient(0, 0, 0, self.height())
+        rect = self.rect()
+        w, h = rect.width(), rect.height()
+        is_vertical = self._edge in (LEFT, RIGHT)
+
+        # ---- Bright vibrant base body ----
+        if is_vertical:
+            base = QLinearGradient(0, 0, w, 0)
         else:
-            grad = QLinearGradient(0, 0, self.width(), 0)
-        grad.setColorAt(0.0, QColor(ACCENT_LIGHT))
-        grad.setColorAt(0.5, QColor(ACCENT_COLOR))
-        grad.setColorAt(1.0, QColor(ACCENT_LIGHT))
+            base = QLinearGradient(0, 0, 0, h)
+        # Much more saturated and vibrant - electric cyan/blue
+        base.setColorAt(0.0, QColor(20, 80, 180))
+        base.setColorAt(0.3, QColor(30, 140, 255))
+        base.setColorAt(0.5, QColor(120, 220, 255))   # near-white core
+        base.setColorAt(0.7, QColor(30, 140, 255))
+        base.setColorAt(1.0, QColor(20, 80, 180))
+        painter.setBrush(base)
+        painter.setPen(Qt.NoPen)
 
-        painter.setBrush(grad)
-        # Bright white border so tab is easy to spot against any background
-        painter.setPen(QPen(QColor(255, 255, 255, 220), 2))
-        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 4, 4)
+        radius = min(w, h) / 2.0
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # ---- DRAMATIC pulsing core - strong bright flash ----
+        # Combine slow base pulse with occasional attention flash
+        slow = 0.5 + 0.5 * math.sin(self._t * 2.5)
+        # Sharp flash every ~2.5s to grab attention
+        flash_phase = math.fmod(self._t, 2.5)
+        flash = max(0, 1.0 - flash_phase * 2.0) ** 3  # sharp decay 0->1 over 0.5s
+        pulse = min(1.0, slow * 0.5 + flash)
+
+        # Full-body brightness overlay
+        painter.setBrush(QColor(255, 255, 255, int(80 * pulse)))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # ---- Traveling bright highlight band ----
+        band_t = math.fmod(self._t * 0.6, 1.0)
+        if is_vertical:
+            pos = h * band_t
+            hi = QLinearGradient(0, pos - 12, 0, pos + 12)
+        else:
+            pos = w * band_t
+            hi = QLinearGradient(pos - 12, 0, pos + 12, 0)
+        hi.setColorAt(0.0, QColor(255, 255, 255, 0))
+        hi.setColorAt(0.5, QColor(255, 255, 255, 220))
+        hi.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setBrush(hi)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # ---- Strong white border ring (high-contrast) ----
+        border_pulse = 0.7 + 0.3 * math.sin(self._t * 3.0)
+        painter.setPen(QPen(QColor(255, 255, 255, int(255 * border_pulse)), 1.5))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), radius - 1, radius - 1)
+
+        # ---- Second inner ring for extra definition ----
+        painter.setPen(QPen(QColor(180, 230, 255, 160), 1))
+        painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), max(1, radius - 3), max(1, radius - 3))
+
+        # ---- Chevron indicator (points inward toward docked edge) ----
+        painter.setPen(QPen(QColor(255, 255, 255, 230), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        cx, cy = w / 2, h / 2
+        ch = min(w, h) * 0.22
+        if self._edge == LEFT:
+            # ">" pointing right
+            path = QPainterPath()
+            path.moveTo(cx - ch * 0.4, cy - ch)
+            path.lineTo(cx + ch * 0.4, cy)
+            path.lineTo(cx - ch * 0.4, cy + ch)
+        elif self._edge == RIGHT:
+            # "<" pointing left
+            path = QPainterPath()
+            path.moveTo(cx + ch * 0.4, cy - ch)
+            path.lineTo(cx - ch * 0.4, cy)
+            path.lineTo(cx + ch * 0.4, cy + ch)
+        elif self._edge == TOP:
+            # V pointing down
+            path = QPainterPath()
+            path.moveTo(cx - ch, cy - ch * 0.4)
+            path.lineTo(cx, cy + ch * 0.4)
+            path.lineTo(cx + ch, cy - ch * 0.4)
+        else:
+            # ^ pointing up
+            path = QPainterPath()
+            path.moveTo(cx - ch, cy + ch * 0.4)
+            path.lineTo(cx, cy - ch * 0.4)
+            path.lineTo(cx + ch, cy + ch * 0.4)
+        painter.drawPath(path)
+
         painter.end()
 
 
@@ -413,9 +498,11 @@ class DockedLauncher(QWidget):
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: {0}; }}".format(dark)
         )
-        self._shortcut_container = QWidget()
+        from .shortcut_widget import ShortcutContainer
+        self._shortcut_container = ShortcutContainer()
         self._shortcut_container.setStyleSheet("background-color: {};".format(dark))
         self._shortcut_container.setAutoFillBackground(True)
+        self._shortcut_container.reorder.connect(self._reorder_to)
         self._shortcut_layout = QVBoxLayout(self._shortcut_container)
         self._shortcut_layout.setContentsMargins(6, 6, 6, 6)
         self._shortcut_layout.setSpacing(2)
@@ -498,6 +585,19 @@ class DockedLauncher(QWidget):
             shortcuts[index], shortcuts[new_index] = shortcuts[new_index], shortcuts[index]
             save_config(self.config)
             self._populate_shortcuts()
+
+    def _reorder_to(self, from_index, to_index):
+        """Move a shortcut from one position to another (drag-reorder)."""
+        shortcuts = self.config.get("shortcuts", [])
+        if not (0 <= from_index < len(shortcuts)):
+            return
+        to_index = max(0, min(to_index, len(shortcuts) - 1))
+        if from_index == to_index:
+            return
+        item = shortcuts.pop(from_index)
+        shortcuts.insert(to_index, item)
+        save_config(self.config)
+        self._populate_shortcuts()
 
     def _launch_shortcut(self, path):
         if not os.path.exists(path):
