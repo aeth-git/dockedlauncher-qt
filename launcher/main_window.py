@@ -357,18 +357,18 @@ class DockedLauncher(QWidget):
         self._leave_count = 0
         self._drag_start = None
         self._is_dragging = False
-        self._acrylic_enabled = False
-        self._glow_pad = 2  # tiny breathing room, no external glow
+        self._glow_pad = 0  # no external glow padding in v3
         self._clamp_val = 0.0
 
-        # Window flags
+        # Window flags - no translucent background (too fragile on some systems)
         self.setWindowFlags(
             Qt.FramelessWindowHint |
             Qt.WindowStaysOnTopHint |
             Qt.Tool
         )
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAutoFillBackground(True)
+        self.setStyleSheet("DockedLauncher { background-color: #0f172a; }")
         self.setWindowOpacity(self.config.get("opacity", DEFAULT_OPACITY))
         self.setAcceptDrops(True)
 
@@ -389,9 +389,38 @@ class DockedLauncher(QWidget):
         self._tendril_timer.timeout.connect(self._tendril_tick)
         self._tendril_timer.start(33)
 
+        # Safety net: 500ms after init, verify tab is actually on a screen.
+        # If not, snap to left-edge center of primary screen. Protects against
+        # stale config landing the tab off-screen on a different machine.
+        QTimer.singleShot(500, self._verify_on_screen)
+
     def _tendril_tick(self):
         if self._is_expanded:
             self.update()
+
+    def _verify_on_screen(self):
+        """If our geometry is not inside any available screen, reset to safe defaults."""
+        geo = self.geometry()
+        app = QApplication.instance()
+        if not app:
+            return
+        screens = app.screens()
+        if not screens:
+            return
+        # Check if our center point is inside any screen's available geometry
+        center = geo.center()
+        for s in screens:
+            if s.availableGeometry().contains(center):
+                return  # We're visible somewhere, fine
+        # Off-screen. Snap to primary screen, left edge, center.
+        _log.warning("Tab off-screen - recovering to primary left-center")
+        self._edge = LEFT
+        self._mon_idx = 0
+        self.config["dock_edge"] = LEFT
+        self.config["monitor"] = 0
+        self.config["edge_offset"] = 0.5
+        save_config(self.config)
+        self._collapse_to_tab()
 
     # ---- Acrylic Blur ----
 
@@ -415,51 +444,8 @@ class DockedLauncher(QWidget):
         self._clamp_anim = anim  # prevent GC
         anim.start()
 
-    # ---- Acrylic Blur ----
-
-    def _enable_acrylic_blur(self):
-        """Enable Windows 10/11 acrylic blur behind the window."""
-        try:
-            class ACCENT_POLICY(ctypes.Structure):
-                _fields_ = [
-                    ("AccentState", ctypes.c_int),
-                    ("AccentFlags", ctypes.c_int),
-                    ("GradientColor", ctypes.c_uint),
-                    ("AnimationId", ctypes.c_int),
-                ]
-
-            class WINCOMPATTRDATA(ctypes.Structure):
-                _fields_ = [
-                    ("Attribute", ctypes.c_int),
-                    ("Data", ctypes.POINTER(ACCENT_POLICY)),
-                    ("SizeOfData", ctypes.c_size_t),
-                ]
-
-            accent = ACCENT_POLICY()
-            accent.AccentState = 4  # ACCENT_ENABLE_ACRYLICBLURBEHIND
-            accent.AccentFlags = 2
-            accent.GradientColor = 0xCC0F172A  # ~80% opacity dark slate (AABBGGRR)
-
-            data = WINCOMPATTRDATA()
-            data.Attribute = 19  # WCA_ACCENT_POLICY
-            data.Data = ctypes.pointer(accent)
-            data.SizeOfData = ctypes.sizeof(accent)
-
-            hwnd = int(self.winId())
-            ctypes.windll.user32.SetWindowCompositionAttributeW(hwnd, ctypes.byref(data))
-            self._acrylic_enabled = True
-            _log.info("Acrylic blur enabled")
-        except Exception as e:
-            self._acrylic_enabled = False
-            _log.info("Acrylic blur not available: %s", e)
-
-    def showEvent(self, event):
-        """Enable acrylic after window is shown (HWND must exist)."""
-        super().showEvent(event)
-        if not self._acrylic_enabled:
-            self._enable_acrylic_blur()
-        # Keep WA_TranslucentBackground=True always. Child widgets (tab, panel)
-        # paint their own solid backgrounds, so this just gives us rounded corners.
+    # Acrylic blur removed in v3 - Windows API call can be flagged by EDR and
+    # fails silently on many systems. Solid glass background is used instead.
 
     # ---- UI Construction ----
 

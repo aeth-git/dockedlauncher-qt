@@ -1,8 +1,7 @@
-"""Entry point for DockedLauncher.
+"""DockedLauncher entry point - single process, zero tricks, guaranteed to work.
 
-Default mode: runs the app directly in-process (simple, works everywhere).
-Opt-in Hydra mode via --hydra flag for process-kill resilience on machines
-that allow it (may be blocked by corporate EDR/antivirus).
+No subprocess spawning, no executable cloning, no detached processes,
+no Windows composition API, no anti-EDR games. Just a plain Qt app.
 """
 import argparse
 import atexit
@@ -12,10 +11,10 @@ import sys
 import os
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt
 
 from .config import load_config, save_config
-from .constants import EDGES
+from .constants import EDGES, LEFT
 from .startup import enable_auto_start, is_auto_start_enabled
 from .logger import setup_logging, get_logger
 
@@ -23,15 +22,14 @@ _mutex_handle = None
 _log = None
 
 
-def _acquire_mutex(name_suffix=""):
-    """Windows named mutex for single-instance enforcement."""
-    kernel32 = ctypes.windll.kernel32
-    mutex_name = "Global\\DockedLauncher_SingleInstance" + name_suffix
-    handle = kernel32.CreateMutexW(None, False, mutex_name)
-    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        kernel32.CloseHandle(handle)
+def _acquire_mutex():
+    """Prevent duplicate instances."""
+    k = ctypes.windll.kernel32
+    h = k.CreateMutexW(None, False, "Global\\DockedLauncher_SingleInstance")
+    if k.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        k.CloseHandle(h)
         return None
-    return handle
+    return h
 
 
 def _release_mutex():
@@ -43,115 +41,110 @@ def _release_mutex():
 
 def _on_signal(signum, frame):
     if _log:
-        _log.info("Received signal %d, shutting down", signum)
+        _log.info("Signal %d received - quitting", signum)
     app = QApplication.instance()
     if app:
         app.quit()
 
 
-def _run_app(args):
-    """Run the Qt app in-process. The simple, reliable path."""
-    global _mutex_handle, _log
-    _log.info("DockedLauncher app starting (PID %d)", os.getpid())
+def _sanitize_config_for_screens(config, screens):
+    """Ensure saved monitor/edge_offset won't place the tab off-screen.
 
-    _mutex_handle = _acquire_mutex("_App")
+    If the saved monitor index doesn't exist, reset to 0. If edge_offset is
+    outside [0, 1], clamp it. This is the last-line-of-defense against the
+    user cloning the repo and having stale config from another machine.
+    """
+    mon = config.get("monitor", 0)
+    if not isinstance(mon, int) or mon < 0 or mon >= len(screens):
+        config["monitor"] = 0
+    off = config.get("edge_offset", 0.5)
+    try:
+        off = float(off)
+    except (TypeError, ValueError):
+        off = 0.5
+    config["edge_offset"] = max(0.0, min(1.0, off))
+    if config.get("dock_edge") not in EDGES:
+        config["dock_edge"] = LEFT
+    return config
+
+
+def main():
+    global _mutex_handle, _log
+
+    parser = argparse.ArgumentParser(description="DockedLauncher")
+    parser.add_argument("--edge", choices=EDGES, default=None)
+    parser.add_argument("--monitor", type=int, default=None)
+    parser.add_argument("--reset", action="store_true",
+                        help="Reset saved position to defaults (recovery mode)")
+    args = parser.parse_args()
+
+    setup_logging()
+    _log = get_logger("main")
+    _log.info("DockedLauncher starting (PID %d)", os.getpid())
+
+    # Single-instance enforcement
+    _mutex_handle = _acquire_mutex()
     if _mutex_handle is None:
         _log.info("Another instance is already running, exiting")
         return 0
     atexit.register(_release_mutex)
 
+    # Ctrl+C / taskkill graceful exit
     signal.signal(signal.SIGTERM, _on_signal)
-    signal.signal(signal.SIGINT, _on_signal)
+    try:
+        signal.signal(signal.SIGINT, _on_signal)
+    except ValueError:
+        pass  # already handled
 
+    # High-DPI - must be set BEFORE QApplication
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    # --- Config with sanity check against actual screens ---
     config = load_config()
+    if args.reset:
+        config["dock_edge"] = LEFT
+        config["edge_offset"] = 0.5
+        config["monitor"] = 0
+        _log.info("Reset mode: using default position")
     if args.edge:
         config["dock_edge"] = args.edge
     if args.monitor is not None:
         config["monitor"] = args.monitor
+
+    screens = app.screens()
+    config = _sanitize_config_for_screens(config, screens)
 
     if config.get("auto_start", True) and not is_auto_start_enabled():
         enable_auto_start()
 
     save_config(config)
 
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
+    # --- Build and show the window ---
+    try:
+        from .main_window import DockedLauncher
+        launcher = DockedLauncher(config=config)
+        launcher.show()
+    except Exception:
+        _log.exception("Failed to construct main window")
+        _release_mutex()
+        return 1
 
-    from .main_window import DockedLauncher
-    launcher = DockedLauncher(config=config)
-    launcher.show()
-
-    _log.info("DockedLauncher app running")
+    _log.info("DockedLauncher running on %d screen(s)", len(screens))
     exit_code = app.exec_()
-    _log.info("DockedLauncher shutting down (code %d)", exit_code)
+    _log.info("DockedLauncher exiting (code %d)", exit_code)
 
-    save_config(launcher.config)
+    try:
+        save_config(launcher.config)
+    except Exception:
+        _log.exception("Failed to save config on exit")
+
     _release_mutex()
     return exit_code
 
 
-def main():
-    global _log
-
-    parser = argparse.ArgumentParser(description="DockedLauncher")
-    parser.add_argument("--edge", choices=EDGES, default=None)
-    parser.add_argument("--monitor", type=int, default=None)
-    parser.add_argument("--hydra", action="store_true",
-                        help="Use Hydra twin-watchdog defense (may be blocked by EDR)")
-    parser.add_argument("--role", choices=["app", "watchdog", "launcher"],
-                        default=None, help=argparse.SUPPRESS)  # internal
-    parser.add_argument("--no-watchdog", action="store_true",
-                        help=argparse.SUPPRESS)  # internal legacy
-    args = parser.parse_args()
-
-    setup_logging()
-    _log = get_logger("main")
-
-    # Simple mode (default): just run the app directly. No subprocess magic.
-    # This works on any machine and won't trigger EDR/antivirus heuristics.
-    if not args.hydra and not args.role:
-        sys.exit(_run_app(args))
-        return
-
-    # Hydra opt-in path
-    extra_args = []
-    if args.edge:
-        extra_args.extend(["--edge", args.edge])
-    if args.monitor is not None:
-        extra_args.extend(["--monitor", str(args.monitor)])
-
-    if args.role is None:
-        # User passed --hydra to bootstrap
-        from .hydra import launch_hydra
-        _log.info("Hydra mode: bootstrap starting twin processes")
-        try:
-            launch_hydra(extra_args)
-            import time as _t
-            _t.sleep(0.5)
-        except Exception as e:
-            _log.error("Hydra failed (%s); falling back to simple mode", e)
-            sys.exit(_run_app(args))
-        return
-
-    if args.role == "watchdog":
-        from .hydra import watchdog_main
-        _mutex_handle = _acquire_mutex("_Watchdog")
-        if _mutex_handle is None:
-            _log.info("Watchdog already running, exiting")
-            return
-        atexit.register(_release_mutex)
-        try:
-            watchdog_main(extra_args)
-        finally:
-            _release_mutex()
-        return
-
-    # args.role == "app" (spawned by Hydra)
-    sys.exit(_run_app(args))
-
-
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
