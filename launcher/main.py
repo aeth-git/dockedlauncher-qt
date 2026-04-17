@@ -1,4 +1,9 @@
-"""Entry point for DockedLauncher with Hydra defense system."""
+"""Entry point for DockedLauncher.
+
+Default mode: runs the app directly in-process (simple, works everywhere).
+Opt-in Hydra mode via --hydra flag for process-kill resilience on machines
+that allow it (may be blocked by corporate EDR/antivirus).
+"""
 import argparse
 import atexit
 import ctypes
@@ -44,62 +49,15 @@ def _on_signal(signum, frame):
         app.quit()
 
 
-def main():
+def _run_app(args):
+    """Run the Qt app in-process. The simple, reliable path."""
     global _mutex_handle, _log
-
-    parser = argparse.ArgumentParser(description="DockedLauncher")
-    parser.add_argument("--edge", choices=EDGES, default=None)
-    parser.add_argument("--monitor", type=int, default=None)
-    parser.add_argument("--no-watchdog", action="store_true",
-                        help="Run directly without watchdog (internal)")
-    parser.add_argument("--role", choices=["app", "watchdog", "launcher"],
-                        default="launcher",
-                        help="Process role in Hydra defense system")
-    args = parser.parse_args()
-
-    setup_logging()
-    _log = get_logger("main")
-
-    extra_args = []
-    if args.edge:
-        extra_args.extend(["--edge", args.edge])
-    if args.monitor is not None:
-        extra_args.extend(["--monitor", str(args.monitor)])
-
-    # --- Role: launcher (default entry point) ---
-    # Bootstraps the Hydra, then exits. This is what the user runs.
-    if args.role == "launcher":
-        from .hydra import launch_hydra
-        _log.info("Launcher bootstrap starting Hydra")
-        launch_hydra(extra_args)
-        # Stay briefly so children can inherit + detach cleanly
-        import time as _t
-        _t.sleep(0.5)
-        return
-
-    # --- Role: watchdog ---
-    if args.role == "watchdog":
-        # Only one watchdog at a time
-        _mutex_handle = _acquire_mutex("_Watchdog")
-        if _mutex_handle is None:
-            _log.info("Watchdog already running, exiting")
-            return
-        atexit.register(_release_mutex)
-
-        from .hydra import watchdog_main
-        try:
-            watchdog_main(extra_args)
-        finally:
-            _release_mutex()
-        return
-
-    # --- Role: app (default when --no-watchdog is passed) ---
-    _log.info("DockedLauncher app starting")
+    _log.info("DockedLauncher app starting (PID %d)", os.getpid())
 
     _mutex_handle = _acquire_mutex("_App")
     if _mutex_handle is None:
-        _log.info("Another app instance is already running, exiting")
-        sys.exit(0)
+        _log.info("Another instance is already running, exiting")
+        return 0
     atexit.register(_release_mutex)
 
     signal.signal(signal.SIGTERM, _on_signal)
@@ -126,20 +84,73 @@ def main():
     launcher = DockedLauncher(config=config)
     launcher.show()
 
-    # Heartbeat timer - writes our heartbeat + checks watchdog peer
-    from .hydra import app_heartbeat_loop
-    heartbeat_timer = QTimer()
-    heartbeat_timer.timeout.connect(app_heartbeat_loop)
-    heartbeat_timer.start(500)  # every 500ms
-
-    _log.info("DockedLauncher app running (PID %d)", os.getpid())
-
+    _log.info("DockedLauncher app running")
     exit_code = app.exec_()
+    _log.info("DockedLauncher shutting down (code %d)", exit_code)
 
-    _log.info("DockedLauncher app shutting down (code %d)", exit_code)
     save_config(launcher.config)
     _release_mutex()
-    sys.exit(exit_code)
+    return exit_code
+
+
+def main():
+    global _log
+
+    parser = argparse.ArgumentParser(description="DockedLauncher")
+    parser.add_argument("--edge", choices=EDGES, default=None)
+    parser.add_argument("--monitor", type=int, default=None)
+    parser.add_argument("--hydra", action="store_true",
+                        help="Use Hydra twin-watchdog defense (may be blocked by EDR)")
+    parser.add_argument("--role", choices=["app", "watchdog", "launcher"],
+                        default=None, help=argparse.SUPPRESS)  # internal
+    parser.add_argument("--no-watchdog", action="store_true",
+                        help=argparse.SUPPRESS)  # internal legacy
+    args = parser.parse_args()
+
+    setup_logging()
+    _log = get_logger("main")
+
+    # Simple mode (default): just run the app directly. No subprocess magic.
+    # This works on any machine and won't trigger EDR/antivirus heuristics.
+    if not args.hydra and not args.role:
+        sys.exit(_run_app(args))
+        return
+
+    # Hydra opt-in path
+    extra_args = []
+    if args.edge:
+        extra_args.extend(["--edge", args.edge])
+    if args.monitor is not None:
+        extra_args.extend(["--monitor", str(args.monitor)])
+
+    if args.role is None:
+        # User passed --hydra to bootstrap
+        from .hydra import launch_hydra
+        _log.info("Hydra mode: bootstrap starting twin processes")
+        try:
+            launch_hydra(extra_args)
+            import time as _t
+            _t.sleep(0.5)
+        except Exception as e:
+            _log.error("Hydra failed (%s); falling back to simple mode", e)
+            sys.exit(_run_app(args))
+        return
+
+    if args.role == "watchdog":
+        from .hydra import watchdog_main
+        _mutex_handle = _acquire_mutex("_Watchdog")
+        if _mutex_handle is None:
+            _log.info("Watchdog already running, exiting")
+            return
+        atexit.register(_release_mutex)
+        try:
+            watchdog_main(extra_args)
+        finally:
+            _release_mutex()
+        return
+
+    # args.role == "app" (spawned by Hydra)
+    sys.exit(_run_app(args))
 
 
 if __name__ == "__main__":
