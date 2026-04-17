@@ -36,33 +36,15 @@ class _IconCanvas(QWidget):
             self._pix.fill(Qt.transparent)
 
     def paintEvent(self, event):
+        """Swiss flat: no shadow, no effect, just the icon rendered crisply."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
         sz = self._size
-        # Draw soft shadow slightly below and behind the icon (2 layers)
-        shadow_pix = self._pix.scaled(
-            QSize(sz, sz), Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        # Create a tinted black silhouette for shadow
-        shadow_img = shadow_pix.toImage()
-        for layer, (ox, oy, alpha) in enumerate([(0, 2, 30), (0, 1, 50)]):
-            sh = QPixmap(shadow_pix.size())
-            sh.fill(Qt.transparent)
-            sp = QPainter(sh)
-            sp.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            sp.drawPixmap(0, 0, shadow_pix)
-            sp.setCompositionMode(QPainter.CompositionMode_SourceIn)
-            sp.fillRect(sh.rect(), QColor(0, 0, 0, alpha))
-            sp.end()
-            painter.drawPixmap(ox, oy, sh)
-
-        # Draw the actual icon crisply on top
         crisp = self._pix.scaled(
             QSize(sz, sz), Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
-        # Center in case aspect ratio changed
         dx = (sz - crisp.width()) // 2
         dy = (sz - crisp.height()) // 2
         painter.drawPixmap(dx, dy, crisp)
@@ -78,10 +60,11 @@ class ShortcutItem(QWidget):
 
     def __init__(self, index, path, name, parent=None):
         super().__init__(parent)
+        from .constants import PAPER, HOVER, INK, HAIRLINE
         self.index = index
         self.path = path
         self.name = name
-        self._bg_alpha = 0.0
+        self._hovered = False
         self._drag_start = None
 
         icon_sz = s(C.ICON_SIZE)
@@ -89,70 +72,45 @@ class ShortcutItem(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover, True)
 
-        # Hover animation - snappy transition
-        self._hover_anim = QPropertyAnimation(self, b"bgAlpha")
-        self._hover_anim.setDuration(80)
-        self._hover_anim.setEasingCurve(QEasingCurve.OutCubic)
-
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(s(10), s(4), s(10), s(4))
-        layout.setSpacing(s(10))
+        layout.setContentsMargins(s(14), s(6), s(14), s(6))
+        layout.setSpacing(s(12))
 
-        # Icon: painted icon with subtle drop shadow and hi-res rendering
         icon_holder = _IconCanvas(path, icon_sz, self)
         icon_holder.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(icon_holder)
 
-        # Name label - bright white, readable, scaled font
+        # Name label - black ink on white, medium weight, Helvetica
         name_label = QLabel(name)
         name_label.setStyleSheet(
-            "QLabel {{ color: #ffffff; background: transparent; "
-            "font-family: {}; font-size: {}px; font-weight: 500; }}".format(FONT_FAMILY, s(11))
+            "QLabel {{ color: {ink}; background: transparent; "
+            "font-family: {font}; font-size: {sz}px; font-weight: 400; }}".format(
+                ink=INK, font=FONT_FAMILY, sz=s(12))
         )
         name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(name_label, 1)
 
-    # ---- Animated hover via custom property ----
-
-    def _get_bg_alpha(self):
-        return self._bg_alpha
-
-    def _set_bg_alpha(self, value):
-        self._bg_alpha = value
-        self.update()
-
-    bgAlpha = pyqtProperty(float, _get_bg_alpha, _set_bg_alpha)
-
     def paintEvent(self, event):
-        """Custom paint: rounded rect with animated alpha for hover."""
-        if self._bg_alpha > 0.005:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing)
-            # Accent color at variable alpha
-            alpha = int(self._bg_alpha * 50)
-            color = QColor(59, 130, 246, alpha)
-            painter.setBrush(color)
-            # Subtle border at higher alpha
-            if self._bg_alpha > 0.3:
-                border_alpha = int(self._bg_alpha * 30)
-                painter.setPen(QPen(QColor(59, 130, 246, border_alpha), 1))
-            else:
-                painter.setPen(Qt.NoPen)
-            rect = self.rect().adjusted(2, 1, -2, -1)
-            painter.drawRoundedRect(rect, 8, 8)
-            painter.end()
+        """Swiss minimal hover: solid gray background on hover, hairline divider."""
+        from .constants import PAPER, HOVER, HAIRLINE
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        rect = self.rect()
+        # Background
+        bg = QColor(HOVER) if self._hovered else QColor(PAPER)
+        painter.fillRect(rect, bg)
+        # Bottom hairline divider
+        painter.setPen(QPen(QColor(HAIRLINE), 1))
+        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        painter.end()
 
     def enterEvent(self, event):
-        self._hover_anim.stop()
-        self._hover_anim.setStartValue(self._bg_alpha)
-        self._hover_anim.setEndValue(1.0)
-        self._hover_anim.start()
+        self._hovered = True
+        self.update()
 
     def leaveEvent(self, event):
-        self._hover_anim.stop()
-        self._hover_anim.setStartValue(self._bg_alpha)
-        self._hover_anim.setEndValue(0.0)
-        self._hover_anim.start()
+        self._hovered = False
+        self.update()
 
     # ---- Click / Drag ----
 
@@ -175,16 +133,17 @@ class ShortcutItem(QWidget):
         mime.setText(self.path)  # fallback for external drops
         drag.setMimeData(mime)
 
-        # Ghost pixmap
+        # Ghost pixmap - Swiss style: white card, black text, thin border
+        from .constants import PAPER, INK, HAIRLINE
         ghost = QPixmap(180, 32)
         ghost.fill(QColor(0, 0, 0, 0))
         painter = QPainter(ghost)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QColor(30, 41, 59, 220))
-        painter.setPen(QPen(QColor(59, 130, 246, 180), 1))
-        painter.drawRoundedRect(ghost.rect().adjusted(1, 1, -1, -1), 6, 6)
-        painter.setPen(QColor(TEXT_PRIMARY))
-        painter.setFont(QFont("Segoe UI", 9))
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setBrush(QColor(PAPER))
+        painter.setPen(QPen(QColor(INK), 1))
+        painter.drawRect(ghost.rect().adjusted(0, 0, -1, -1))
+        painter.setPen(QColor(INK))
+        painter.setFont(QFont(FONT_FAMILY.split(",")[0].strip(), 10))
         painter.drawText(ghost.rect().adjusted(10, 0, -10, 0), Qt.AlignVCenter, self.name)
         painter.end()
         drag.setPixmap(ghost)
@@ -209,11 +168,16 @@ class ShortcutItem(QWidget):
         self._drag_start = None
 
     def contextMenuEvent(self, event):
+        from .constants import PAPER, INK, HOVER, HAIRLINE
         menu = QMenu(self)
         menu.setStyleSheet(
-            "QMenu {{ background-color: {}; color: {}; border: 1px solid rgba(148,163,184,0.2); border-radius: 6px; padding: 4px; }}"
-            "QMenu::item:selected {{ background-color: rgba(59,130,246,0.3); border-radius: 4px; }}".format(
-                GLASS_BG_SOLID, TEXT_PRIMARY
+            "QMenu {{ background-color: {paper}; color: {ink}; "
+            "border: 1px solid {line}; border-radius: 0; padding: 4px; "
+            "font-family: {font}; font-size: 11px; }}"
+            "QMenu::item {{ padding: 4px 14px; }}"
+            "QMenu::item:selected {{ background-color: {hover}; }}"
+            "QMenu::separator {{ height: 1px; background: {line}; margin: 4px 0; }}".format(
+                paper=PAPER, ink=INK, line=HAIRLINE, hover=HOVER, font=FONT_FAMILY
             )
         )
         move_up = menu.addAction("Move Up")
@@ -306,16 +270,11 @@ class ShortcutContainer(QWidget):
     def paintEvent(self, event):
         super().paintEvent(event)
         if self._drop_line_y is not None:
+            from .constants import RED
             painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing)
-            # Bright drop indicator line
-            pen = QPen(QColor(120, 200, 255, 220), 2)
-            painter.setPen(pen)
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            # Swiss red drop indicator: sharp, bold, no decoration
+            painter.setPen(QPen(QColor(RED), 2))
             y = int(self._drop_line_y)
             painter.drawLine(8, y, self.width() - 8, y)
-            # End caps (small circles)
-            painter.setBrush(QColor(180, 220, 255, 220))
-            painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPoint(8, y), 3, 3)
-            painter.drawEllipse(QPoint(self.width() - 8, y), 3, 3)
             painter.end()
