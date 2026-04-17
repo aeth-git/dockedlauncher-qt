@@ -123,37 +123,132 @@ class GlowTab(QWidget):
         painter.setPen(QPen(QColor(180, 230, 255, 160), 1))
         painter.drawRoundedRect(rect.adjusted(3, 3, -3, -3), max(1, radius - 3), max(1, radius - 3))
 
-        # ---- Chevron indicator (points inward toward docked edge) ----
-        painter.setPen(QPen(QColor(255, 255, 255, 230), 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        cx, cy = w / 2, h / 2
-        ch = min(w, h) * 0.22
-        if self._edge == LEFT:
-            # ">" pointing right
-            path = QPainterPath()
-            path.moveTo(cx - ch * 0.4, cy - ch)
-            path.lineTo(cx + ch * 0.4, cy)
-            path.lineTo(cx - ch * 0.4, cy + ch)
-        elif self._edge == RIGHT:
-            # "<" pointing left
-            path = QPainterPath()
-            path.moveTo(cx + ch * 0.4, cy - ch)
-            path.lineTo(cx - ch * 0.4, cy)
-            path.lineTo(cx + ch * 0.4, cy + ch)
-        elif self._edge == TOP:
-            # V pointing down
-            path = QPainterPath()
-            path.moveTo(cx - ch, cy - ch * 0.4)
-            path.lineTo(cx, cy + ch * 0.4)
-            path.lineTo(cx + ch, cy - ch * 0.4)
-        else:
-            # ^ pointing up
-            path = QPainterPath()
-            path.moveTo(cx - ch, cy + ch * 0.4)
-            path.lineTo(cx, cy - ch * 0.4)
-            path.lineTo(cx + ch, cy + ch * 0.4)
-        painter.drawPath(path)
+        # ---- Radar scanner badge (rotationally symmetric, always animated) ----
+        self._render_radar(painter, w, h)
 
         painter.end()
+
+    def _render_radar(self, painter, w, h):
+        """Animated radar scanner: rings, tick marks, sweep arm, blips.
+
+        Rotationally symmetric so no per-edge rotation needed.
+        Fits into the widget's short dimension.
+        """
+        import math
+        from PyQt5.QtGui import QConicalGradient, QRadialGradient
+
+        # Centre of the tab
+        cx, cy = w / 2.0, h / 2.0
+        # Radar fits into the short dimension with a small margin
+        r_outer = min(w, h) / 2.0 - 2.0
+        if r_outer < 4:
+            return
+        r_inner = r_outer * 0.62
+        r_core = r_outer * 0.22
+
+        sweep_angle_deg = (self._t * 110) % 360  # rotates smoothly
+        sweep_rad = math.radians(sweep_angle_deg)
+
+        # --- Sweep "radar trail" arc (conical gradient fading behind the arm) ---
+        painter.save()
+        painter.translate(cx, cy)
+        # Qt's conical gradient starts at angle and goes counter-clockwise
+        # We want a trail FADING behind the sweep, so start at sweep_angle
+        trail_grad = QConicalGradient(0, 0, -sweep_angle_deg)
+        trail_grad.setColorAt(0.0, QColor(120, 220, 255, 180))  # leading edge bright
+        trail_grad.setColorAt(0.15, QColor(120, 220, 255, 50))
+        trail_grad.setColorAt(0.35, QColor(120, 220, 255, 10))
+        trail_grad.setColorAt(1.0, QColor(120, 220, 255, 0))
+        painter.setBrush(trail_grad)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(0, 0), r_outer - 1, r_outer - 1)
+        painter.restore()
+
+        # --- Outer ring ---
+        painter.setPen(QPen(QColor(150, 210, 255, 210), 1.3))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPointF(cx, cy), r_outer, r_outer)
+
+        # --- Tick marks around the outer ring (like a compass) ---
+        tick_count = 16
+        painter.setPen(QPen(QColor(200, 230, 255, 220), 1))
+        for i in range(tick_count):
+            ang = 2 * math.pi * i / tick_count
+            # Every 4th tick is longer (cardinal directions)
+            tick_len = 3.0 if i % 4 == 0 else 1.8
+            x0 = cx + math.cos(ang) * (r_outer - tick_len)
+            y0 = cy + math.sin(ang) * (r_outer - tick_len)
+            x1 = cx + math.cos(ang) * r_outer
+            y1 = cy + math.sin(ang) * r_outer
+            painter.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+
+        # --- Inner ring (dashed for detail) ---
+        inner_pen = QPen(QColor(100, 180, 255, 160), 0.9, Qt.DashLine)
+        painter.setPen(inner_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPointF(cx, cy), r_inner, r_inner)
+
+        # --- Cross hairs (faint, add detail) ---
+        painter.setPen(QPen(QColor(130, 190, 255, 60), 0.7))
+        painter.drawLine(QPointF(cx - r_inner, cy), QPointF(cx + r_inner, cy))
+        painter.drawLine(QPointF(cx, cy - r_inner), QPointF(cx, cy + r_inner))
+
+        # --- Rotating sweep arm (bright gradient from centre to edge) ---
+        arm_x = cx + math.cos(sweep_rad) * (r_outer - 1)
+        arm_y = cy + math.sin(sweep_rad) * (r_outer - 1)
+        arm_grad = QLinearGradient(cx, cy, arm_x, arm_y)
+        arm_grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+        arm_grad.setColorAt(0.3, QColor(200, 240, 255, 180))
+        arm_grad.setColorAt(1.0, QColor(255, 255, 255, 255))
+        painter.setPen(QPen(arm_grad, 1.6, Qt.SolidLine, Qt.RoundCap))
+        painter.drawLine(QPointF(cx, cy), QPointF(arm_x, arm_y))
+
+        # Sweep tip glow
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 180))
+        painter.drawEllipse(QPointF(arm_x, arm_y), 1.8, 1.8)
+
+        # --- Radar blips (small dots that pulse in/out at fixed positions) ---
+        blip_positions = [
+            (math.radians(35), r_inner * 0.9),
+            (math.radians(150), r_outer * 0.78),
+            (math.radians(260), r_inner * 0.6),
+        ]
+        for i, (ang, rad) in enumerate(blip_positions):
+            bx = cx + math.cos(ang) * rad
+            by = cy + math.sin(ang) * rad
+            # Blip pulses independently, brighter when sweep passes over it
+            pulse_phase = math.sin(self._t * 2.5 + i * 1.7) * 0.5 + 0.5
+            # Boost when sweep is near (within ~30 deg)
+            sweep_delta = abs(((sweep_angle_deg - math.degrees(ang)) + 180) % 360 - 180)
+            detection = max(0.0, 1.0 - sweep_delta / 30.0)
+            intensity = min(1.0, pulse_phase * 0.4 + detection * 0.9)
+            blip_a = int(255 * intensity)
+            if blip_a > 10:
+                # Blip halo
+                painter.setBrush(QColor(255, 200, 120, int(blip_a * 0.3)))
+                painter.drawEllipse(QPointF(bx, by), 3.0, 3.0)
+                # Blip core
+                painter.setBrush(QColor(255, 240, 180, blip_a))
+                painter.drawEllipse(QPointF(bx, by), 1.3, 1.3)
+
+        # --- Central core (bright pulsing orb) ---
+        core_pulse = 0.8 + 0.2 * math.sin(self._t * 3.0)
+        # Outer glow
+        core_glow = QRadialGradient(QPointF(cx, cy), r_core * 2.2)
+        core_glow.setColorAt(0.0, QColor(200, 240, 255, int(180 * core_pulse)))
+        core_glow.setColorAt(0.5, QColor(120, 200, 255, int(60 * core_pulse)))
+        core_glow.setColorAt(1.0, QColor(60, 140, 220, 0))
+        painter.setBrush(core_glow)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), r_core * 2.2, r_core * 2.2)
+        # Solid core
+        core_solid = QRadialGradient(QPointF(cx - r_core * 0.3, cy - r_core * 0.3), r_core * 1.3)
+        core_solid.setColorAt(0.0, QColor(255, 255, 255, 255))
+        core_solid.setColorAt(0.5, QColor(180, 230, 255, 255))
+        core_solid.setColorAt(1.0, QColor(60, 150, 230, 255))
+        painter.setBrush(core_solid)
+        painter.drawEllipse(QPointF(cx, cy), r_core, r_core)
 
 
 # ---- Sci-Fi Bottom Bar ----
