@@ -67,6 +67,7 @@ class GlowTab(QWidget):
         self._chevron_pix = None
         self.setAutoFillBackground(False)
         self.setAttribute(Qt.WA_Hover, True)
+        self.setToolTip("DockedLauncher — hover to open, drag to move")
 
     def set_edge(self, edge):
         if edge != self._edge:
@@ -310,19 +311,10 @@ class DockedLauncher(QWidget):
         self._poll_timer.timeout.connect(self._check_hover)
         self._poll_timer.start(HOVER_POLL_MS)
 
-        # Tendril animation timer (~30fps repaint when expanded)
-        self._tendril_timer = QTimer(self)
-        self._tendril_timer.timeout.connect(self._tendril_tick)
-        self._tendril_timer.start(33)
-
         # Safety net: 500ms after init, verify tab is actually on a screen.
         # If not, snap to left-edge center of primary screen. Protects against
         # stale config landing the tab off-screen on a different machine.
         QTimer.singleShot(500, self._verify_on_screen)
-
-    def _tendril_tick(self):
-        if self._is_expanded:
-            self.update()
 
     def _verify_on_screen(self):
         """If our geometry is not inside any available screen, reset to safe defaults."""

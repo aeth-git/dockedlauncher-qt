@@ -91,18 +91,30 @@ class ShortcutItem(QWidget):
         layout.addWidget(name_label, 1)
 
     def paintEvent(self, event):
-        """Swiss minimal hover: solid gray background on hover, hairline divider."""
+        """Swiss minimal hover: solid gray background on hover, hairline divider
+        drawn between items (skipped on the last item to avoid doubling with
+        the bottom toolbar's own top hairline)."""
         from .constants import PAPER, HOVER, HAIRLINE
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = self.rect()
-        # Background
         bg = QColor(HOVER) if self._hovered else QColor(PAPER)
         painter.fillRect(rect, bg)
-        # Bottom hairline divider
-        painter.setPen(QPen(QColor(HAIRLINE), 1))
-        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        if not self._is_last_item():
+            painter.setPen(QPen(QColor(HAIRLINE), 1))
+            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
         painter.end()
+
+    def _is_last_item(self):
+        parent_layout = self.parent().layout() if self.parent() else None
+        if parent_layout is None:
+            return False
+        last = None
+        for i in range(parent_layout.count()):
+            w = parent_layout.itemAt(i).widget()
+            if isinstance(w, ShortcutItem):
+                last = w
+        return last is self
 
     def enterEvent(self, event):
         self._hovered = True
