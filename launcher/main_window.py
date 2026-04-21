@@ -13,6 +13,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtGui import (
     QFont, QCursor, QColor, QPainter, QLinearGradient, QPen, QPainterPath,
+    QPixmap,
 )
 
 from .config import load_config, save_config
@@ -40,47 +41,125 @@ _log = get_logger("main_window")
 # ---- Glow Tab ----
 
 class GlowTab(QWidget):
-    """Swiss minimal tab: thin black bar with a single red accent square.
+    """Swiss minimal tab with UX-first visibility.
 
-    No gradients, no animation beyond a subtle opacity breathe.
-    The name "GlowTab" is preserved for compatibility but there's no glow.
+    Design principles applied:
+      * High chromatic contrast: Swiss red fill reads on any desktop background
+      * Figure-ground separation: 1px white hairline on the three outer sides
+        guarantees a visible edge against both light and dark wallpapers
+      * Affordance signifier: a white chevron points toward the panel, giving
+        the tab pull-handle language (the classic drawer metaphor)
+      * Hit target: 14 x 80 is still restrained but comfortably findable
+      * Hover feedback: red darkens slightly before the panel begins to expand,
+        giving a tactile confirmation the cursor is on a control
+    The name "GlowTab" is preserved for compatibility but there is no glow.
     """
+
+    # Chevron is pre-rendered once per edge and cached in a QPixmap so that
+    # repeated repaints (hover polling, panel animations) blit identical pixels
+    # every frame - eliminates sub-pixel AA flicker on the vector arrow.
+    _CHEVRON_BOX = 16  # oversized canvas; chevron is drawn centered inside
 
     def __init__(self, edge, parent=None):
         super().__init__(parent)
         self._edge = edge
+        self._hovered = False
+        self._chevron_pix = None
         self.setAutoFillBackground(False)
+        self.setAttribute(Qt.WA_Hover, True)
 
     def set_edge(self, edge):
-        self._edge = edge
+        if edge != self._edge:
+            self._edge = edge
+            self._chevron_pix = None  # invalidate cache for new direction
         self.update()
 
-    def paintEvent(self, event):
-        from .constants import INK, RED
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)  # crisp 1px lines
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
 
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+
+    def _build_chevron_pixmap(self):
+        """Render the chevron once to a transparent pixmap.
+
+        Using device-pixel-ratio keeps it crisp on 4K at 150%. Blitting this
+        cached pixmap each paint guarantees identical pixels every frame.
+        """
+        from .constants import PAPER
+        dpr = self.devicePixelRatioF() if hasattr(self, "devicePixelRatioF") else 1.0
+        box = self._CHEVRON_BOX
+        pix = QPixmap(int(box * dpr), int(box * dpr))
+        pix.setDevicePixelRatio(dpr)
+        pix.fill(Qt.transparent)
+
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(QPen(QColor(PAPER), 1.5, Qt.SolidLine,
+                      Qt.RoundCap, Qt.RoundJoin))
+        cx = cy = box / 2.0
+        path = QPainterPath()
+        if self._edge == LEFT:
+            path.moveTo(cx - 2.0, cy - 3.5)
+            path.lineTo(cx + 2.0, cy)
+            path.lineTo(cx - 2.0, cy + 3.5)
+        elif self._edge == RIGHT:
+            path.moveTo(cx + 2.0, cy - 3.5)
+            path.lineTo(cx - 2.0, cy)
+            path.lineTo(cx + 2.0, cy + 3.5)
+        elif self._edge == TOP:
+            path.moveTo(cx - 3.5, cy - 2.0)
+            path.lineTo(cx, cy + 2.0)
+            path.lineTo(cx + 3.5, cy - 2.0)
+        else:  # BOTTOM
+            path.moveTo(cx - 3.5, cy + 2.0)
+            path.lineTo(cx, cy - 2.0)
+            path.lineTo(cx + 3.5, cy + 2.0)
+        p.drawPath(path)
+        p.end()
+        return pix
+
+    def paintEvent(self, event):
+        from .constants import PAPER, RED
+        painter = QPainter(self)
         rect = self.rect()
         w, h = rect.width(), rect.height()
 
-        # Solid black bar, no gradient, sharp corners (Swiss design)
-        painter.fillRect(rect, QColor(INK))
+        # --- Fill: bold Swiss red (single hero accent) ---
+        tab_color = QColor(RED)
+        if self._hovered:
+            tab_color = tab_color.darker(115)  # subtle tactile feedback
+        painter.setRenderHint(QPainter.Antialiasing, False)  # crisp fill edges
+        painter.fillRect(rect, tab_color)
 
-        # Single red accent square near the top/edge
-        # Placement depends on orientation - always in the "inboard" third
-        accent = QColor(RED)
-        if self._edge in (LEFT, RIGHT):
-            # Vertical tab - red square near top
-            sq = min(w - 2, 4)
-            x = (w - sq) // 2
-            y = max(4, h // 6)
-            painter.fillRect(x, y, sq, sq, accent)
-        else:
-            # Horizontal tab - red square near left
-            sq = min(h - 2, 4)
-            x = max(4, w // 6)
-            y = (h - sq) // 2
-            painter.fillRect(x, y, sq, sq, accent)
+        # --- 1px white hairline on the three outer sides ---
+        painter.setPen(QPen(QColor(PAPER), 1))
+        if self._edge == LEFT:
+            painter.drawLine(0, 0, 0, h - 1)
+            painter.drawLine(0, 0, w - 1, 0)
+            painter.drawLine(0, h - 1, w - 1, h - 1)
+        elif self._edge == RIGHT:
+            painter.drawLine(w - 1, 0, w - 1, h - 1)
+            painter.drawLine(0, 0, w - 1, 0)
+            painter.drawLine(0, h - 1, w - 1, h - 1)
+        elif self._edge == TOP:
+            painter.drawLine(0, 0, w - 1, 0)
+            painter.drawLine(0, 0, 0, h - 1)
+            painter.drawLine(w - 1, 0, w - 1, h - 1)
+        else:  # BOTTOM
+            painter.drawLine(0, h - 1, w - 1, h - 1)
+            painter.drawLine(0, 0, 0, h - 1)
+            painter.drawLine(w - 1, 0, w - 1, h - 1)
+
+        # --- Pre-rendered chevron blit (stable, no AA flicker) ---
+        if self._chevron_pix is None:
+            self._chevron_pix = self._build_chevron_pixmap()
+        box = self._CHEVRON_BOX
+        x = (w - box) // 2
+        y = (h - box) // 2
+        painter.drawPixmap(x, y, self._chevron_pix)
 
         painter.end()
 

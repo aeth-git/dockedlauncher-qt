@@ -10,9 +10,9 @@ TOP = "top"
 BOTTOM = "bottom"
 EDGES = [LEFT, RIGHT, TOP, BOTTOM]
 
-# Tab dimensions - thin minimal bar
-TAB_W = 8
-TAB_H = 56
+# Tab dimensions - findable but restrained pull-handle
+TAB_W = 14
+TAB_H = 80
 
 # Panel dimensions
 PANEL_WIDTH = 220
