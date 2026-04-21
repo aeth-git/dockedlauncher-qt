@@ -16,11 +16,12 @@ from .scaling import s
 
 
 class _IconCanvas(QWidget):
-    """Paints an app icon crisply with a subtle drop-shadow for depth."""
+    """Paints an app icon crisply, optionally dimmed for missing targets."""
 
-    def __init__(self, path, size, parent=None):
+    def __init__(self, path, size, parent=None, dimmed=False):
         super().__init__(parent)
         self._size = size
+        self._dimmed = dimmed
         self.setFixedSize(size, size)
         # Render source at high-DPI (3x) then scale down for retina sharpness
         src = get_pixmap(path)
@@ -36,10 +37,13 @@ class _IconCanvas(QWidget):
             self._pix.fill(Qt.transparent)
 
     def paintEvent(self, event):
-        """Swiss flat: no shadow, no effect, just the icon rendered crisply."""
+        """Swiss flat: no shadow, no effect, just the icon rendered crisply.
+        Dimmed items (missing targets) paint at 35% opacity."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        if self._dimmed:
+            painter.setOpacity(0.35)
 
         sz = self._size
         crisp = self._pix.scaled(
@@ -60,12 +64,21 @@ class ShortcutItem(QWidget):
 
     def __init__(self, index, path, name, parent=None):
         super().__init__(parent)
-        from .constants import PAPER, HOVER, INK, HAIRLINE
+        from .constants import PAPER, HOVER, INK, INK_MUTED, HAIRLINE
         self.index = index
         self.path = path
         self.name = name
         self._hovered = False
         self._drag_start = None
+        # Target-existence is checked once at construct time; _populate_shortcuts
+        # re-creates items on add/remove, so the state stays fresh for the
+        # common case without per-paint filesystem calls.
+        self._missing = bool(path) and not os.path.exists(path)
+
+        if self._missing:
+            self.setToolTip("Target not found:\n{}".format(path))
+        elif path:
+            self.setToolTip(path)
 
         icon_sz = s(C.ICON_SIZE)
         self.setFixedHeight(s(C.SHORTCUT_ITEM_HEIGHT))
@@ -76,16 +89,17 @@ class ShortcutItem(QWidget):
         layout.setContentsMargins(s(14), s(6), s(14), s(6))
         layout.setSpacing(s(12))
 
-        icon_holder = _IconCanvas(path, icon_sz, self)
+        icon_holder = _IconCanvas(path, icon_sz, self, dimmed=self._missing)
         icon_holder.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(icon_holder)
 
-        # Name label - black ink on white, medium weight, Helvetica
+        # Name label - black ink on white, Helvetica. Muted when target missing.
+        label_color = INK_MUTED if self._missing else INK
         name_label = QLabel(name)
         name_label.setStyleSheet(
             "QLabel {{ color: {ink}; background: transparent; "
             "font-family: {font}; font-size: {sz}px; font-weight: 400; }}".format(
-                ink=INK, font=FONT_FAMILY, sz=s(12))
+                ink=label_color, font=FONT_FAMILY, sz=s(12))
         )
         name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(name_label, 1)
