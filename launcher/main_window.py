@@ -311,6 +311,12 @@ class DockedLauncher(QWidget):
         self._poll_timer.timeout.connect(self._check_hover)
         self._poll_timer.start(HOVER_POLL_MS)
 
+        # Global hotkey (Ctrl+Alt+Space by default). Fire-and-forget: if the
+        # combination is already owned by another app we log and move on —
+        # the launcher remains fully usable via hover.
+        self._hotkey_mgr = None
+        self._install_global_hotkey()
+
         # Safety net: 500ms after init, verify tab is actually on a screen.
         # If not, snap to left-edge center of primary screen. Protects against
         # stale config landing the tab off-screen on a different machine.
@@ -723,7 +729,36 @@ class DockedLauncher(QWidget):
                 f.write("user")
         except Exception:
             pass
+        if self._hotkey_mgr is not None:
+            self._hotkey_mgr.unregister_all()
         QApplication.quit()
+
+    # ---- Global Hotkey ----
+
+    _HOTKEY_ID_TOGGLE = 1
+
+    def _install_global_hotkey(self):
+        from .hotkey import HotkeyManager, MOD_CONTROL, MOD_ALT, VK_SPACE
+        app = QApplication.instance()
+        if app is None:
+            return
+        self._hotkey_mgr = HotkeyManager(app, self._on_global_hotkey)
+        # Ctrl+Alt+Space: Alt+Space is reserved by Windows (system menu), but
+        # adding Ctrl disambiguates and is unlikely to collide with app-level
+        # shortcuts.
+        self._hotkey_mgr.register(
+            self._HOTKEY_ID_TOGGLE, MOD_CONTROL | MOD_ALT, VK_SPACE
+        )
+
+    def _on_global_hotkey(self, hotkey_id):
+        if hotkey_id != self._HOTKEY_ID_TOGGLE:
+            return
+        if self._is_animating:
+            return
+        if self._is_expanded:
+            self._collapse_to_tab()
+        else:
+            self._expand_to_panel()
 
     def _apply_settings(self, new_config):
         self.config = new_config

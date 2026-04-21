@@ -206,18 +206,33 @@ class ShortcutItem(QWidget):
                 paper=PAPER, ink=INK, line=HAIRLINE, hover=HOVER, font=FONT_FAMILY
             )
         )
+        reveal = menu.addAction("Reveal in Explorer")
+        reveal.setEnabled(not self._missing)
+        menu.addSeparator()
         move_up = menu.addAction("Move Up")
         move_down = menu.addAction("Move Down")
         menu.addSeparator()
         remove = menu.addAction("Remove")
 
         action = menu.exec_(event.globalPos())
-        if action == move_up:
+        if action == reveal:
+            self._reveal_in_explorer()
+        elif action == move_up:
             self.moved.emit(self.index, -1)
         elif action == move_down:
             self.moved.emit(self.index, 1)
         elif action == remove:
             self.removed.emit(self.index)
+
+    def _reveal_in_explorer(self):
+        """Open Explorer with the target file pre-selected."""
+        import subprocess
+        try:
+            # /select,<path> must be a single arg token; explorer parses the
+            # comma-prefixed suffix itself. No shell=True needed — no injection.
+            subprocess.Popen(["explorer", "/select,{}".format(self.path)])
+        except OSError:
+            pass
 
 
 class ShortcutContainer(QWidget):
