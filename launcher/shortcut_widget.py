@@ -16,11 +16,12 @@ from .scaling import s
 
 
 class _IconCanvas(QWidget):
-    """Paints an app icon crisply with a subtle drop-shadow for depth."""
+    """Paints an app icon crisply, optionally dimmed for missing targets."""
 
-    def __init__(self, path, size, parent=None):
+    def __init__(self, path, size, parent=None, dimmed=False):
         super().__init__(parent)
         self._size = size
+        self._dimmed = dimmed
         self.setFixedSize(size, size)
         # Render source at high-DPI (3x) then scale down for retina sharpness
         src = get_pixmap(path)
@@ -36,10 +37,13 @@ class _IconCanvas(QWidget):
             self._pix.fill(Qt.transparent)
 
     def paintEvent(self, event):
-        """Swiss flat: no shadow, no effect, just the icon rendered crisply."""
+        """Swiss flat: no shadow, no effect, just the icon rendered crisply.
+        Dimmed items (missing targets) paint at 35% opacity."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        if self._dimmed:
+            painter.setOpacity(0.35)
 
         sz = self._size
         crisp = self._pix.scaled(
@@ -60,12 +64,21 @@ class ShortcutItem(QWidget):
 
     def __init__(self, index, path, name, parent=None):
         super().__init__(parent)
-        from .constants import PAPER, HOVER, INK, HAIRLINE
+        from .constants import PAPER, HOVER, INK, INK_MUTED, HAIRLINE
         self.index = index
         self.path = path
         self.name = name
         self._hovered = False
         self._drag_start = None
+        # Target-existence is checked once at construct time; _populate_shortcuts
+        # re-creates items on add/remove, so the state stays fresh for the
+        # common case without per-paint filesystem calls.
+        self._missing = bool(path) and not os.path.exists(path)
+
+        if self._missing:
+            self.setToolTip("Target not found:\n{}".format(path))
+        elif path:
+            self.setToolTip(path)
 
         icon_sz = s(C.ICON_SIZE)
         self.setFixedHeight(s(C.SHORTCUT_ITEM_HEIGHT))
@@ -76,33 +89,46 @@ class ShortcutItem(QWidget):
         layout.setContentsMargins(s(14), s(6), s(14), s(6))
         layout.setSpacing(s(12))
 
-        icon_holder = _IconCanvas(path, icon_sz, self)
+        icon_holder = _IconCanvas(path, icon_sz, self, dimmed=self._missing)
         icon_holder.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(icon_holder)
 
-        # Name label - black ink on white, medium weight, Helvetica
+        # Name label - black ink on white, Helvetica. Muted when target missing.
+        label_color = INK_MUTED if self._missing else INK
         name_label = QLabel(name)
         name_label.setStyleSheet(
             "QLabel {{ color: {ink}; background: transparent; "
             "font-family: {font}; font-size: {sz}px; font-weight: 400; }}".format(
-                ink=INK, font=FONT_FAMILY, sz=s(12))
+                ink=label_color, font=FONT_FAMILY, sz=s(12))
         )
         name_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(name_label, 1)
 
     def paintEvent(self, event):
-        """Swiss minimal hover: solid gray background on hover, hairline divider."""
+        """Swiss minimal hover: solid gray background on hover, hairline divider
+        drawn between items (skipped on the last item to avoid doubling with
+        the bottom toolbar's own top hairline)."""
         from .constants import PAPER, HOVER, HAIRLINE
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
         rect = self.rect()
-        # Background
         bg = QColor(HOVER) if self._hovered else QColor(PAPER)
         painter.fillRect(rect, bg)
-        # Bottom hairline divider
-        painter.setPen(QPen(QColor(HAIRLINE), 1))
-        painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
+        if not self._is_last_item():
+            painter.setPen(QPen(QColor(HAIRLINE), 1))
+            painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom())
         painter.end()
+
+    def _is_last_item(self):
+        parent_layout = self.parent().layout() if self.parent() else None
+        if parent_layout is None:
+            return False
+        last = None
+        for i in range(parent_layout.count()):
+            w = parent_layout.itemAt(i).widget()
+            if isinstance(w, ShortcutItem):
+                last = w
+        return last is self
 
     def enterEvent(self, event):
         self._hovered = True
@@ -180,18 +206,33 @@ class ShortcutItem(QWidget):
                 paper=PAPER, ink=INK, line=HAIRLINE, hover=HOVER, font=FONT_FAMILY
             )
         )
+        reveal = menu.addAction("Reveal in Explorer")
+        reveal.setEnabled(not self._missing)
+        menu.addSeparator()
         move_up = menu.addAction("Move Up")
         move_down = menu.addAction("Move Down")
         menu.addSeparator()
         remove = menu.addAction("Remove")
 
         action = menu.exec_(event.globalPos())
-        if action == move_up:
+        if action == reveal:
+            self._reveal_in_explorer()
+        elif action == move_up:
             self.moved.emit(self.index, -1)
         elif action == move_down:
             self.moved.emit(self.index, 1)
         elif action == remove:
             self.removed.emit(self.index)
+
+    def _reveal_in_explorer(self):
+        """Open Explorer with the target file pre-selected."""
+        import subprocess
+        try:
+            # /select,<path> must be a single arg token; explorer parses the
+            # comma-prefixed suffix itself. No shell=True needed — no injection.
+            subprocess.Popen(["explorer", "/select,{}".format(self.path)])
+        except OSError:
+            pass
 
 
 class ShortcutContainer(QWidget):

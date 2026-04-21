@@ -6,8 +6,8 @@ import subprocess
 from collections import OrderedDict
 
 from PyQt5.QtWidgets import QFileIconProvider
-from PyQt5.QtCore import QFileInfo, QSize
-from PyQt5.QtGui import QIcon, QPixmap, QColor
+from PyQt5.QtCore import QFileInfo, QSize, Qt
+from PyQt5.QtGui import QIcon, QPixmap, QColor, QPainter, QPen
 from PyQt5.QtWinExtras import QtWin
 
 from .constants import ICON_SIZE, ACCENT_COLOR
@@ -170,6 +170,21 @@ def _resolve_lnk_target(lnk_path):
 
 
 def _default_pixmap(size=256):
+    """Neutral 'broken/missing' placeholder. Light gray square with a 1px
+    darker border and a diagonal stroke. Kept on the grayscale axis so the
+    Swiss red accent on the tab remains the only hero color."""
     pixmap = QPixmap(size, size)
-    pixmap.fill(QColor(ACCENT_COLOR))
+    pixmap.fill(Qt.transparent)
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    inset = max(2, size // 16)
+    body = pixmap.rect().adjusted(inset, inset, -inset, -inset)
+    p.fillRect(body, QColor("#ececec"))
+    p.setPen(QPen(QColor("#bdbdbd"), max(1, size // 64)))
+    p.setBrush(Qt.NoBrush)
+    p.drawRect(body)
+    # Diagonal stroke — universal "missing/broken" glyph
+    p.setPen(QPen(QColor("#9a9a9a"), max(2, size // 48)))
+    p.drawLine(body.topLeft(), body.bottomRight())
+    p.end()
     return pixmap
