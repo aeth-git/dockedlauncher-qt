@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How Telegram Accounts Get Faked — What You Need to Know</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 17px;
+      line-height: 1.75;
+      color: #1a1a1a;
+      background: #f9f7f4;
+    }
+
+    .page {
+      max-width: 760px;
+      margin: 48px auto 80px;
+      background: #ffffff;
+      padding: 56px 64px;
+      border-radius: 4px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+    }
+
+    .meta {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: bold;
+      line-height: 1.3;
+      color: #111;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      color: #555;
+      margin-bottom: 32px;
+      font-style: italic;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #e0ddd8;
+      margin: 32px 0;
+    }
+
+    h2 {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #c0392b;
+      margin-bottom: 12px;
+      margin-top: 36px;
+    }
+
+    h3 {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 28px;
+      margin-bottom: 8px;
+      color: #1a1a1a;
+    }
+
+    p {
+      margin-bottom: 16px;
+    }
+
+    .analogy-box {
+      background: #fdf6e3;
+      border-left: 4px solid #e6a817;
+      padding: 18px 22px;
+      margin: 24px 0;
+      font-style: italic;
+      font-size: 16px;
+      color: #4a3800;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .warning-box {
+      background: #fef2f2;
+      border-left: 4px solid #c0392b;
+      padding: 18px 22px;
+      margin: 24px 0;
+      border-radius: 0 4px 4px 0;
+    }
+
+    .warning-box p {
+      margin: 0;
+      font-size: 15px;
+      color: #5c0011;
+    }
+
+    .checklist {
+      list-style: none;
+      margin: 16px 0;
+      padding: 0;
+    }
+
+    .checklist li {
+      padding: 10px 0 10px 36px;
+      position: relative;
+      border-bottom: 1px solid #f0ede8;
+      font-size: 16px;
+    }
+
+    .checklist li:last-child { border-bottom: none; }
+
+    .checklist li::before {
+      content: '✓';
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 24px;
+      height: 24px;
+      background: #27ae60;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: bold;
+      line-height: 24px;
+      text-align: center;
+    }
+
+    .case-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+
+    .case-card {
+      background: #f4f2ef;
+      border-radius: 4px;
+      padding: 16px 18px;
+    }
+
+    .case-card .label {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #888;
+      margin-bottom: 4px;
+    }
+
+    .case-card .value {
+      font-size: 22px;
+      font-weight: bold;
+      color: #c0392b;
+      line-height: 1.2;
+      margin-bottom: 4px;
+    }
+
+    .case-card p {
+      font-size: 13px;
+      color: #555;
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 14px;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }
+
+    th {
+      background: #f4f2ef;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      color: #333;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f0ede8;
+      color: #333;
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-both  { background: #fce8e8; color: #c0392b; }
+    .badge-android { background: #e3f9e5; color: #1a7a2a; }
+    .badge-ios   { background: #e8eeff; color: #1a3580; }
+    .badge-win   { background: #f0f0f0; color: #555; }
+
+    .sources {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 12px;
+      color: #888;
+      margin-top: 40px;
+    }
+
+    .sources h2 { color: #888; margin-top: 0; }
+
+    .sources ol {
+      padding-left: 20px;
+      line-height: 1.9;
+    }
+
+    .sources a {
+      color: #888;
+      word-break: break-all;
+    }
+
+    .footer {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 11px;
+      color: #bbb;
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 1px solid #f0ede8;
+    }
+
+    @media print {
+      body { background: white; }
+      .page { box-shadow: none; margin: 0; padding: 40px; }
+      .no-print { display: none; }
+    }
+
+    @media (max-width: 640px) {
+      .page { padding: 28px 20px; margin: 0; border-radius: 0; }
+      .case-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="meta">Security Awareness Report &nbsp;·&nbsp; May 2026 &nbsp;·&nbsp; Educational Use</div>
+  <h1>How Telegram Accounts Get Faked</h1>
+  <p class="subtitle">What every Telegram user on iPhone or Android needs to know</p>
+
+  <hr />
+
+  <!-- THE CORE PROBLEM -->
+  <h2>The Core Problem</h2>
+
+  <p>On most platforms, pretending to be someone else is hard. On Telegram, it is surprisingly easy — not because someone broke in, but because of how Telegram was designed.</p>
+
+  <div class="analogy-box">
+    Think of it like a conference where anyone can write any name on their badge and attach any photo. Nobody checks ID at the door. If two people wear the exact same badge, no alarm goes off. The only reliable proof of identity — a wristband number assigned when you entered — is locked in a back office you never visit.
+  </div>
+
+  <p>That wristband number is Telegram's internal account ID. It is the only thing that cannot be faked. But Telegram does not show it to you anywhere in the normal app.</p>
+
+  <hr />
+
+  <!-- WHY IT IS EASY -->
+  <h2>Why Faking an Account Is Easy</h2>
+
+  <h3>1. Anyone can copy your name exactly</h3>
+  <p>Telegram does <strong>not require display names to be unique</strong>. An impersonator can create an account with a name that is letter-for-letter identical to yours, download your profile photo (if it is public), and message your contacts. Telegram will not warn those contacts that a new account suddenly shares your exact name and photo.</p>
+
+  <h3>2. Usernames can use invisible lookalike letters</h3>
+  <p>Your username <em>is</em> unique — but only in the exact characters used. A scammer can register a username that looks identical by swapping one letter for a lookalike from another alphabet. For example, a Cyrillic "а" and a Latin "a" appear the same on screen but are different characters. This makes <code>@support</code> and what looks like <code>@support</code> actually two completely different accounts.</p>
+
+  <h3>3. Usernames can be re-claimed after someone gives them up</h3>
+  <p>If a trusted person or company gives up their Telegram username, anyone else can claim it immediately. A scammer who grabs it then inherits all the trust people associated with that name.</p>
+
+  <h3>4. Verification is not available to ordinary people</h3>
+  <p>Telegram's blue verification badge is reserved for large, active official channels and organisations. <strong>Regular user accounts cannot get one.</strong> A system for third-party verification was introduced in January 2025, but it covers only recognised institutional verifiers, not private individuals. [1, 2]</p>
+
+  <h3>5. Your phone number is hidden from strangers by default</h3>
+  <p>The one piece of information that would let someone distinguish the real you from a fake — your registered phone number — is hidden from people who are not already your contacts. So a stranger contacting your friends sees only a name and photo, both of which can be copied.</p>
+
+  <hr />
+
+  <!-- REAL NUMBERS -->
+  <h2>How Big Is This Problem?</h2>
+
+  <div class="case-grid">
+    <div class="case-card">
+      <div class="label">Fake channels studied</div>
+      <div class="value">35,382</div>
+      <p>Telegram channels analysed in a 2021 academic study, covering 130 million messages [3]</p>
+    </div>
+    <div class="case-card">
+      <div class="label">Subscribers on one fake</div>
+      <div class="value">364,663</div>
+      <p>People subscribed to a single fake channel impersonating a named public figure [3]</p>
+    </div>
+    <div class="case-card">
+      <div class="label">Fake accounts per day</div>
+      <div class="value">300+</div>
+      <p>New impersonator accounts created daily during December 2024, up from ~160 in November [4]</p>
+    </div>
+    <div class="case-card">
+      <div class="label">Stolen in one scam wave</div>
+      <div class="value">$3 M+</div>
+      <p>Lost by at least two victims deceived by a fake "verification bot" in Telegram in late 2024 [5]</p>
+    </div>
+  </div>
+
+  <p>In October 2024, an Indian court (Madras High Court) accepted Telegram's undertaking to remove and block fake channels impersonating a major payments app after thousands of customers were redirected to scammers. [6]</p>
+
+  <hr />
+
+  <!-- KNOWN SECURITY FLAWS -->
+  <h2>Known Security Flaws That Made Things Worse</h2>
+
+  <p>Beyond the design issues above, security researchers have found specific technical flaws in the Telegram apps:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Flaw</th>
+        <th>Platform</th>
+        <th>What it did</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Disguised malware files</strong><br /><small style="color:#888">CVE-2024-7014, ESET Research</small></td>
+        <td><span class="badge badge-android">Android</span></td>
+        <td>Attackers could send a malicious app disguised as a video thumbnail. Tapping "play" prompted you to install malware. Sold on criminal forums before Telegram fixed it.</td>
+        <td>Fixed July 2024</td>
+      </tr>
+      <tr>
+        <td><strong>Lookalike web links</strong><br /><small style="color:#888">CVE-2019-10044 &amp; CVE-2020-12474</small></td>
+        <td><span class="badge badge-both">iOS &amp; Android</span></td>
+        <td>Links inside Telegram messages could display a trusted web address (e.g. your bank's site) while actually pointing somewhere else. Patched, but two separate patches were needed.</td>
+        <td>Fixed 2019 &amp; 2020</td>
+      </tr>
+      <tr>
+        <td><strong>IP address leak</strong></td>
+        <td><span class="badge badge-both">iOS &amp; Android</span></td>
+        <td>Tapping a Telegram "proxy" link immediately revealed your real IP address to the link sender, before any confirmation dialog appeared.</td>
+        <td>Patched</td>
+      </tr>
+      <tr>
+        <td><strong>Reversed filename trick</strong><br /><small style="color:#888">Kaspersky, 2018</small></td>
+        <td><span class="badge badge-win">Windows only</span></td>
+        <td>A hidden character could make a virus file display as an image. Exploited for almost a year before discovery.</td>
+        <td>Fixed 2018</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr />
+
+  <!-- iOS vs ANDROID -->
+  <h2>iPhone vs Android: One Extra Risk for iPhone Users</h2>
+
+  <div class="warning-box">
+    <p><strong>iPhone only:</strong> Even if you set "Who can add me to groups" to "Nobody" in Telegram's privacy settings, Telegram Premium subscribers can still add you to groups against your wishes. This loophole does not exist on Android. It means a scammer with a Premium account can silently place you into a fake "support" or "investment" group without your consent. [7]</p>
+  </div>
+
+  <hr />
+
+  <!-- HOW TO PROTECT YOURSELF -->
+  <h2>How to Protect Yourself</h2>
+
+  <ul class="checklist">
+    <li><strong>Verify identity outside Telegram.</strong> If someone contacts you claiming to be a friend, colleague, or company representative, call them or check through a different channel before acting on any request — especially requests involving money or passwords.</li>
+    <li><strong>Turn on two-step verification.</strong> Go to Settings → Privacy and Security → Two-Step Verification. This prevents someone from taking over your account if your phone number is ever recycled by your carrier.</li>
+    <li><strong>Check usernames character by character.</strong> Look for subtle differences: a "1" instead of "l", a capital "I" instead of a lowercase "l", or a zero instead of "O". These are designed to be invisible at a glance.</li>
+    <li><strong>Keep the Telegram app updated.</strong> Several of the flaws above required app updates to fix. Running an old version leaves you exposed to known attacks.</li>
+    <li><strong>Be cautious about groups you did not join yourself.</strong> If you find yourself in an unfamiliar group — especially one that immediately offers investment tips, prizes, or urgent help — leave it. On iPhone, check your privacy settings even if you set them to "Nobody."</li>
+    <li><strong>Treat urgent financial requests in Telegram as a red flag.</strong> Legitimate organisations do not ask for transfers, cryptocurrency, or login codes through Telegram messages.</li>
+  </ul>
+
+  <hr />
+
+  <!-- SOURCES -->
+  <div class="sources">
+    <h2>Sources &amp; References</h2>
+    <ol>
+      <li>Telegram Page Verification Guidelines. <a href="https://telegram.org/verify">telegram.org/verify</a></li>
+      <li>TechCrunch, January 2, 2025. "Telegram rolls out third-party account verification, filters." <a href="https://techcrunch.com/2025/01/02/telegram-rolls-out-third-party-account-verification-filters/">techcrunch.com</a></li>
+      <li>La Morgia M., Mei A., Mongardini A.M., Wu J. (2021). "Uncovering the Dark Side of Telegram: Fakes, Clones, Scams, and Conspiracy Movements." arXiv:2111.13530. <a href="https://arxiv.org/abs/2111.13530">arxiv.org/abs/2111.13530</a></li>
+      <li>Scam Sniffer / CoinTelegraph, December 2024. "Malicious Telegram group scams have increased 2,000% since November." <a href="https://cointelegraph.com/news/malicious-telegram-group-scams-have-increased-2000-since-november-scam-sniffer">cointelegraph.com</a></li>
+      <li>SlowMist, 2024. "New Scam Technique: Fake Safeguard Scam on Telegram." <a href="https://slowmist.medium.com/new-scam-technique-fake-safeguard-scam-on-telegram-bb4803bad521">slowmist.medium.com</a>; FX Leaders, December 11, 2024. <a href="https://www.fxleaders.com/news/2024/12/11/telegram-bot-scams-cost-crypto-users-millions-in-stolen-funds/">fxleaders.com</a></li>
+      <li>LawBeat, October 2024. "Telegram Agrees before Madras HC to Remove Fake PhonePe Accounts." <a href="https://lawbeat.in/news-updates/telegram-agrees-madras-high-court-remove-fake-phonepe-accounts-amid-trademark-infringement">lawbeat.in</a></li>
+      <li>bugs.telegram.org — Privacy setting: "Who can add me to groups." <a href="https://bugs.telegram.org/c/1094/21">bugs.telegram.org/c/1094/21</a></li>
+      <li>ESET WeLiveSecurity, July 2024. "Cursed tapes: Exploiting the EvilVideo vulnerability on Telegram for Android." CVE-2024-7014. <a href="https://www.welivesecurity.com/en/eset-research/cursed-tapes-exploiting-evilvideo-vulnerability-telegram-android/">welivesecurity.com</a></li>
+      <li>NVD — CVE-2020-12474. <a href="https://nvd.nist.gov/vuln/detail/CVE-2020-12474">nvd.nist.gov</a>; NVD — CVE-2019-10044. <a href="https://nvd.nist.gov/vuln/detail/CVE-2019-10044">nvd.nist.gov</a></li>
+      <li>Kaspersky Securelist, February 2018. "Zero-day vulnerability in Telegram." <a href="https://securelist.com/zero-day-vulnerability-in-telegram/83800/">securelist.com</a></li>
+      <li>SOCRadar. "Critical One-Click IP Leak in Telegram." <a href="https://socradar.io/blog/critical-one-click-ip-leak-telegram/">socradar.io</a></li>
+      <li>tdesktop GitHub Issue #24368, April 2022. <a href="https://github.com/telegramdesktop/tdesktop/issues/24368">github.com/telegramdesktop</a></li>
+    </ol>
+  </div>
+
+  <div class="footer">
+    Produced for public educational and security awareness purposes &nbsp;·&nbsp; May 2026<br />
+    All statistics independently verified. No affiliation with Telegram Messenger Inc.
+  </div>
+
+</div>
+</body>
+</html>
