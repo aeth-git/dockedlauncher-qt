@@ -1,0 +1,603 @@
+"""ForensicWindow — the main application window."""
+import os
+import sys
+from typing import List, Optional
+
+from PyQt5.QtCore import (
+    Qt, QObject, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve,
+    QTimer,
+)
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QKeySequence
+from PyQt5.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTabWidget, QTabBar, QStackedWidget, QStatusBar, QFileDialog, QMessageBox,
+    QInputDialog, QApplication, QFrame, QShortcut, QSizePolicy,
+)
+
+from .constants import (
+    PAPER, HAIRLINE, INK, INK_MUTED, INK_SOFT, RED, RED_LIGHT, FONT_FAMILY,
+    FONT_SIZE_TITLE, FONT_SIZE_DATA, FONT_SIZE_LABEL,
+    WINDOW_MIN_W, WINDOW_MIN_H, WINDOW_DEFAULT_W, WINDOW_DEFAULT_H,
+    SOURCE_BAR_H, DEVICE_INFO_BAR_H,
+)
+from .case_log import CaseLog
+from .logger import get_logger
+from .sources.base import DataSource
+from .views.messages_view import MessagesView
+from .views.calls_view import CallsView
+from .views.contacts_view import ContactsView
+from .views.photos_view import PhotosView
+from .views.apps_view import AppsView
+
+_log = get_logger("main_window")
+
+MAIN_TAB_QSS = f"""
+QTabWidget::pane {{
+    border: none;
+    border-top: 1px solid {HAIRLINE};
+}}
+QTabBar::tab {{
+    background: {PAPER};
+    color: {INK_MUTED};
+    font-family: {FONT_FAMILY};
+    font-size: 11px;
+    padding: 10px 24px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    min-width: 80px;
+}}
+QTabBar::tab:selected {{
+    color: {INK};
+    border-bottom: 2px solid {RED};
+}}
+QTabBar::tab:hover:!selected {{
+    color: {INK_SOFT};
+    background: #f2f2f2;
+}}
+QTabBar {{
+    background: {PAPER};
+    border-bottom: 1px solid {HAIRLINE};
+}}
+"""
+
+CARD_QSS_BASE = f"""
+QFrame {{
+    background: {PAPER};
+    border: 1px solid {HAIRLINE};
+}}
+QFrame:hover {{
+    background: #f2f2f2;
+    border-color: {INK};
+}}
+"""
+
+CARD_QSS_ACTIVE = f"""
+QFrame {{
+    background: {RED_LIGHT};
+    border: 1px solid {RED};
+}}
+"""
+
+
+# ── Worker ────────────────────────────────────────────────────────────────────
+
+class _Worker(QObject):
+    """Runs a parser.parse() in a background thread. Carries a session token."""
+    finished = pyqtSignal(int, list)    # (token, records)
+    error    = pyqtSignal(int, str, str) # (token, title, detail)
+
+    def __init__(self, token: int, parser_cls, source: DataSource):
+        super().__init__()
+        self._token = token
+        self._parser_cls = parser_cls
+        self._source = source
+
+    def run(self):
+        # SQLite connections must be created in the thread that uses them
+        try:
+            parser = self._parser_cls(self._source)
+            records = parser.parse()
+            self.finished.emit(self._token, records)
+        except Exception as e:
+            title = type(e).__name__
+            detail = str(e)
+            _log.warning("Parser %s failed: %s", self._parser_cls.__name__, e)
+            self.error.emit(self._token, title, detail)
+
+
+def _start_worker(token, parser_cls, source, on_done, on_error):
+    """Create a QObject worker, move it to a QThread, wire signals, start."""
+    thread = QThread()
+    worker = _Worker(token, parser_cls, source)
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    worker.finished.connect(lambda tok, recs: on_done(tok, recs))
+    worker.error.connect(lambda tok, t, d: on_error(tok, t, d))
+    worker.finished.connect(thread.quit)
+    worker.error.connect(thread.quit)
+    thread.finished.connect(thread.deleteLater)
+    thread.start()
+    return thread, worker
+
+
+# ── Source Card ───────────────────────────────────────────────────────────────
+
+class _SourceCard(QFrame):
+    """Large clickable card for source selection."""
+
+    def __init__(self, icon_char: str, title: str, subtitle: str, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(200, 110)
+        self.setStyleSheet(CARD_QSS_BASE)
+        self.setCursor(Qt.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(4)
+
+        icon_lbl = QLabel(icon_char)
+        icon_lbl.setAlignment(Qt.AlignLeft)
+        icon_lbl.setStyleSheet(
+            f"color:{INK}; font-size:20px; border:none; background:transparent;"
+        )
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(
+            f"color:{INK}; font-family:{FONT_FAMILY}; font-size:13px; "
+            f"font-weight:600; border:none; background:transparent;"
+        )
+        sub_lbl = QLabel(subtitle)
+        sub_lbl.setWordWrap(True)
+        sub_lbl.setStyleSheet(
+            f"color:{INK_MUTED}; font-family:{FONT_FAMILY}; font-size:10px; "
+            f"border:none; background:transparent;"
+        )
+
+        layout.addWidget(icon_lbl)
+        layout.addWidget(title_lbl)
+        layout.addWidget(sub_lbl)
+
+    def set_active(self, active: bool):
+        self.setStyleSheet(CARD_QSS_ACTIVE if active else CARD_QSS_BASE)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked()
+
+    def clicked(self):
+        pass   # overridden by lambda in ForensicWindow
+
+
+# ── Splash (source selection) ─────────────────────────────────────────────────
+
+class _SplashWidget(QWidget):
+    """Full-window splash shown before any source is loaded."""
+
+    def __init__(self, on_backup, on_device, on_image, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(f"background:{PAPER};")
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(32)
+
+        # Logo
+        logo = QLabel("iForensic")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setStyleSheet(
+            f"color:{INK}; font-family:{FONT_FAMILY}; font-size:22px; font-weight:300;"
+        )
+        sub = QLabel("iPhone Forensic Analyzer")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setStyleSheet(
+            f"color:{INK_MUTED}; font-family:{FONT_FAMILY}; font-size:12px;"
+        )
+        layout.addWidget(logo)
+        layout.addWidget(sub)
+
+        # Cards row
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(16)
+        cards_row.setAlignment(Qt.AlignCenter)
+
+        self._card_backup = _SourceCard("▤", "iTunes Backup",
+                                         "Open a backup folder from\niTunes or Finder")
+        self._card_device = _SourceCard("◈", "Live Device",
+                                         "Connect an iPhone\nover USB")
+        self._card_image  = _SourceCard("⊞", "Forensic Image",
+                                         "Open a folder, .zip,\nor .tar archive")
+
+        self._card_backup.clicked = on_backup
+        self._card_device.clicked = on_device
+        self._card_image.clicked  = on_image
+
+        cards_row.addWidget(self._card_backup)
+        cards_row.addWidget(self._card_device)
+        cards_row.addWidget(self._card_image)
+
+        cards_widget = QWidget()
+        cards_widget.setLayout(cards_row)
+        layout.addWidget(cards_widget)
+
+        hint = QLabel("Double-click a card to open a source")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(
+            f"color:{INK_MUTED}; font-family:{FONT_FAMILY}; font-size:10px;"
+        )
+        layout.addWidget(hint)
+
+
+# ── Slim source bar (shown after load) ───────────────────────────────────────
+
+class _SlimBar(QWidget):
+    """Thin 52px bar showing active source + device info + change button."""
+
+    def __init__(self, on_change, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(SOURCE_BAR_H)
+        self.setStyleSheet(
+            f"background:{PAPER}; border-bottom:1px solid {HAIRLINE};"
+        )
+        row = QHBoxLayout(self)
+        row.setContentsMargins(20, 0, 16, 0)
+
+        # Logo mark
+        mark = QLabel()
+        mark.setFixedSize(12, 12)
+        mark.setStyleSheet(f"background:{RED};")
+
+        name = QLabel("iForensic")
+        name.setStyleSheet(
+            f"color:{INK}; font-family:{FONT_FAMILY}; font-size:13px; font-weight:600;"
+        )
+
+        sep = QLabel("·")
+        sep.setStyleSheet(f"color:{RED}; font-size:14px; margin:0 4px;")
+
+        self._source_label = QLabel("No source")
+        self._source_label.setStyleSheet(
+            f"color:{INK_SOFT}; font-family:{FONT_FAMILY}; font-size:11px;"
+        )
+
+        self._device_label = QLabel()
+        self._device_label.setStyleSheet(
+            f"color:{INK_MUTED}; font-family:{FONT_FAMILY}; font-size:10px;"
+        )
+        self._device_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        change_btn = QPushButton("Change Source")
+        change_btn.setFixedHeight(26)
+        change_btn.setStyleSheet(
+            f"QPushButton {{ background:{PAPER}; color:{INK}; border:1px solid {HAIRLINE};"
+            f" font-family:{FONT_FAMILY}; font-size:10px; padding:0 10px; }}"
+            f"QPushButton:hover {{ border-color:{INK}; }}"
+        )
+        change_btn.setCursor(Qt.PointingHandCursor)
+        change_btn.clicked.connect(on_change)
+
+        row.addWidget(mark)
+        row.addSpacing(8)
+        row.addWidget(name)
+        row.addWidget(sep)
+        row.addWidget(self._source_label)
+        row.addSpacing(16)
+        row.addWidget(self._device_label, 1)
+        row.addWidget(change_btn)
+
+    def set_source(self, source_label: str, device_info: dict):
+        self._source_label.setText(source_label)
+        parts = []
+        if device_info.get("name"):
+            parts.append(device_info["name"])
+        if device_info.get("ios_version"):
+            parts.append(f"iOS {device_info['ios_version']}")
+        if device_info.get("serial"):
+            parts.append(f"SN: {device_info['serial']}")
+        if device_info.get("imei"):
+            parts.append(f"IMEI: {device_info['imei']}")
+        self._device_label.setText("  ·  ".join(parts))
+
+
+# ── Main Window ───────────────────────────────────────────────────────────────
+
+class ForensicWindow(QMainWindow):
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("iForensic — iPhone Forensic Analyzer")
+        self.setMinimumSize(WINDOW_MIN_W, WINDOW_MIN_H)
+        self.resize(WINDOW_DEFAULT_W, WINDOW_DEFAULT_H)
+        self.setStyleSheet(f"QMainWindow {{ background:{PAPER}; }}")
+
+        self._case_log = CaseLog()
+        self._source: Optional[DataSource] = None
+        self._session_token = 0
+        self._active_threads: List[QThread] = []
+
+        self._build_ui()
+
+    def _build_ui(self):
+        central = QWidget()
+        central.setStyleSheet(f"background:{PAPER};")
+        self.setCentralWidget(central)
+
+        self._root_layout = QVBoxLayout(central)
+        self._root_layout.setContentsMargins(0, 0, 0, 0)
+        self._root_layout.setSpacing(0)
+
+        # Stacked: splash (0) vs loaded (1)
+        self._top_stack = QStackedWidget()
+
+        self._splash = _SplashWidget(
+            on_backup=self._select_backup,
+            on_device=self._select_device,
+            on_image=self._select_image,
+        )
+        self._slim_bar = _SlimBar(on_change=self._go_splash)
+        self._slim_bar.hide()  # hidden until source loaded
+
+        self._root_layout.addWidget(self._slim_bar)
+
+        # Content stack: splash vs tabs
+        self._content_stack = QStackedWidget()
+        self._content_stack.addWidget(self._splash)          # 0
+
+        self._tabs_widget = self._build_tabs()
+        self._content_stack.addWidget(self._tabs_widget)      # 1
+
+        self._root_layout.addWidget(self._content_stack, 1)
+
+        # Status bar
+        self._status = QStatusBar()
+        self._status.setStyleSheet(
+            f"QStatusBar {{ background:{PAPER}; color:{INK_MUTED}; "
+            f"font-family:{FONT_FAMILY}; font-size:10px; border-top:1px solid {HAIRLINE}; }}"
+        )
+        self.setStatusBar(self._status)
+        self._status.showMessage("Ready — open a source to begin.")
+
+    def _build_tabs(self) -> QTabWidget:
+        tabs = QTabWidget()
+        tabs.setStyleSheet(MAIN_TAB_QSS)
+        tabs.setDocumentMode(True)
+
+        self._msg_view      = MessagesView(case_log=self._case_log)
+        self._calls_view    = CallsView(case_log=self._case_log)
+        self._contacts_view = ContactsView(case_log=self._case_log)
+        self._photos_view   = PhotosView(case_log=self._case_log)
+        self._apps_view     = AppsView(case_log=self._case_log)
+
+        tabs.addTab(self._msg_view,      "Messages")
+        tabs.addTab(self._calls_view,    "Calls")
+        tabs.addTab(self._contacts_view, "Contacts")
+        tabs.addTab(self._photos_view,   "Photos")
+        tabs.addTab(self._apps_view,     "Apps")
+
+        return tabs
+
+    # ── Source selection ──────────────────────────────────────────────────────
+
+    def _go_splash(self):
+        self._cancel_all_workers()
+        if self._source:
+            self._source.close()
+            self._source = None
+        self._slim_bar.hide()
+        self._content_stack.setCurrentIndex(0)
+        self._status.showMessage("Ready — open a source to begin.")
+
+    def _select_backup(self):
+        default = _default_backup_dir()
+        path = QFileDialog.getExistingDirectory(
+            self, "Select iTunes/Finder Backup Folder", default
+        )
+        if not path:
+            return
+        self._open_source("backup", path)
+
+    def _select_device(self):
+        try:
+            from .sources.device import list_connected_devices
+        except ImportError:
+            QMessageBox.warning(
+                self, "pymobiledevice3 not installed",
+                "Install it with:\n  pip install pymobiledevice3"
+            )
+            return
+        devices = list_connected_devices()
+        if not devices:
+            QMessageBox.information(
+                self, "No Device Found",
+                "No iPhone detected over USB.\n\n"
+                "Make sure the iPhone is connected, unlocked, and you have "
+                "tapped 'Trust' on the device."
+            )
+            return
+        self._open_source("device", devices[0]["udid"])
+
+    def _select_image(self):
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Forensic Image Folder", os.path.expanduser("~")
+        )
+        if not path:
+            # Also try file dialog for archives
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Forensic Image Archive",
+                os.path.expanduser("~"),
+                "Archives (*.zip *.tar *.tar.gz *.tgz *.tar.bz2 *.tar.xz)"
+            )
+        if not path:
+            return
+        self._open_source("image", path)
+
+    def _open_source(self, source_type: str, path: str):
+        self._cancel_all_workers()
+        if self._source:
+            self._source.close()
+            self._source = None
+
+        self._status.showMessage("Opening source…")
+
+        try:
+            if source_type == "backup":
+                from .sources.backup import BackupSource
+                src = BackupSource(path)
+                label = "iTunes Backup"
+            elif source_type == "device":
+                from .sources.device import DeviceSource
+                src = DeviceSource(path)
+                label = "Live Device"
+            else:
+                from .sources.image import ImageSource
+                src = ImageSource(path)
+                label = "Forensic Image"
+
+            src.open()
+        except PermissionError as e:
+            msg = str(e)
+            if "encrypted" in msg.lower() or "password" in msg.lower():
+                pwd, ok = QInputDialog.getText(
+                    self, "Encrypted Backup",
+                    "This backup is encrypted. Enter the backup password:",
+                    echo=QInputDialog.Password
+                )
+                if not ok:
+                    return
+                # Re-open with password (future: wire into BackupSource)
+                QMessageBox.information(
+                    self, "Encrypted Backup",
+                    "Encrypted backup decryption via 'iphone-backup-decrypt' "
+                    "is supported. Install it and retry:\n  pip install iphone-backup-decrypt"
+                )
+                return
+            QMessageBox.critical(self, "Permission Denied", msg)
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Failed to Open Source", str(e))
+            self._status.showMessage(f"Error: {e}")
+            return
+
+        self._source = src
+        device_info = src.get_device_info()
+
+        # Log to case log
+        if hasattr(src, "manifest_hash") and src.manifest_hash():
+            self._case_log.log_source_opened(path, src.manifest_hash())
+        else:
+            self._case_log.log_source_opened(path)
+
+        # Show slim bar + switch to tabs
+        self._slim_bar.set_source(label, device_info)
+        self._slim_bar.show()
+        self._content_stack.setCurrentIndex(1)
+
+        # Start loading all parsers
+        self._load_all_parsers()
+
+    # ── Parser loading ────────────────────────────────────────────────────────
+
+    def _load_all_parsers(self):
+        self._session_token += 1
+        token = self._session_token
+
+        self._status.showMessage("Loading data… 0 / 12")
+        self._loaded_count = 0
+        self._total_count = 12  # SMS, Calls, Contacts, Photos, Apps + 7 messaging apps
+
+        # Standard parsers
+        from .parsers.messages  import SMSParser
+        from .parsers.calls     import CallParser
+        from .parsers.contacts  import ContactsParser
+        from .parsers.photos    import PhotoIndexer
+        from .parsers.apps      import InstalledAppsParser
+
+        self._launch(token, SMSParser,
+                     lambda recs: self._msg_view.load_app_records("sms", recs),
+                     lambda t, d: self._msg_view.load_app_records("sms", None, t, d))
+        self._launch(token, CallParser,
+                     lambda recs: self._calls_view.load_records(recs),
+                     lambda t, d: self._calls_view.show_error(t, d))
+        self._launch(token, ContactsParser,
+                     lambda recs: self._contacts_view.load_records(recs),
+                     lambda t, d: self._contacts_view.show_error(t, d))
+        self._launch(token, PhotoIndexer,
+                     lambda recs: self._photos_view.load_records(recs),
+                     lambda t, d: self._photos_view.show_error(t, d) if hasattr(self._photos_view, 'show_error') else None)
+        self._launch(token, InstalledAppsParser,
+                     lambda recs: self._apps_view.load_records(recs),
+                     lambda t, d: self._apps_view.show_error(t, d))
+
+        # Third-party messaging apps
+        from .parsers.thirdparty.whatsapp  import WhatsAppParser
+        from .parsers.thirdparty.telegram  import TelegramParser
+        from .parsers.thirdparty.signal    import SignalParser
+        from .parsers.thirdparty.messenger import MessengerParser
+        from .parsers.thirdparty.instagram import InstagramParser
+        from .parsers.thirdparty.snapchat  import SnapchatParser
+
+        for key, parser_cls in [
+            ("whatsapp",  WhatsAppParser),
+            ("telegram",  TelegramParser),
+            ("signal",    SignalParser),
+            ("messenger", MessengerParser),
+            ("instagram", InstagramParser),
+            ("snapchat",  SnapchatParser),
+        ]:
+            k = key   # capture
+            self._launch(token, parser_cls,
+                         lambda recs, k=k: self._msg_view.load_app_records(k, recs),
+                         lambda t, d, k=k: self._msg_view.load_app_records(k, None, t, d))
+
+    def _launch(self, token, parser_cls, on_done, on_error):
+        src = self._source
+
+        def _done(tok, recs):
+            if tok != self._session_token:
+                return    # stale result — discard
+            on_done(recs)
+            self._tick_progress()
+
+        def _err(tok, title, detail):
+            if tok != self._session_token:
+                return
+            on_error(title, detail)
+            self._tick_progress()
+
+        thread, worker = _start_worker(token, parser_cls, src, _done, _err)
+        self._active_threads.append(thread)
+
+    def _tick_progress(self):
+        self._loaded_count = getattr(self, "_loaded_count", 0) + 1
+        total = getattr(self, "_total_count", 12)
+        if self._loaded_count >= total:
+            self._status.showMessage(
+                f"Loaded — {self._loaded_count} parsers complete."
+            )
+        else:
+            self._status.showMessage(
+                f"Loading… {self._loaded_count} / {total}"
+            )
+
+    def _cancel_all_workers(self):
+        self._session_token += 1   # invalidates all in-flight results
+        for t in self._active_threads:
+            t.quit()
+            t.wait(300)
+        self._active_threads.clear()
+
+    def closeEvent(self, event):
+        self._cancel_all_workers()
+        if self._source:
+            self._source.close()
+        super().closeEvent(event)
+
+
+def _default_backup_dir() -> str:
+    if sys.platform == "win32":
+        return os.path.join(
+            os.environ.get("APPDATA", ""),
+            "Apple Computer", "MobileSync", "Backup"
+        )
+    elif sys.platform == "darwin":
+        return os.path.expanduser(
+            "~/Library/Application Support/MobileSync/Backup"
+        )
+    return os.path.expanduser("~")

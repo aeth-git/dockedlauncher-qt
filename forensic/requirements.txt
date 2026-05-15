@@ -1,0 +1,6 @@
+PyQt5>=5.15.0
+Pillow>=9.0.0
+iphone-backup-decrypt>=0.3.0
+pillow-heif>=0.13.0
+pymobiledevice3>=4.0.0
+sqlcipher3>=0.4.0
