@@ -1,13 +1,15 @@
 """Photos tab view — fixed-column grid with background thumbnail loading."""
 import io
 import os
+import queue as _queue_mod
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import List
+from typing import Callable, List, Optional
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QIcon
+from PyQt5.QtCore import Qt, QSize, QTimer
+from PyQt5.QtGui import QPixmap, QImage, QColor, QPainter, QFont, QIcon
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QGridLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog, QFrame, QSizePolicy,
@@ -31,70 +33,117 @@ except ImportError:
     _HEIC_OK = False
 
 
-class _ThumbnailLoader(QThread):
-    """Loads thumbnails in background; emits (index, pixmap) on main thread."""
-    thumbnail_ready = pyqtSignal(int, QPixmap)
-    finished_all = pyqtSignal()
+class _ThumbnailLoader:
+    """Loads thumbnails in a daemon thread; delivers results via QTimer drain loop.
+
+    Using threading.Thread(daemon=True) instead of QThread avoids the C++
+    destructor crash that occurs when Python GC collects a QThread wrapper
+    while the OS thread is still running.
+    """
+
+    _SENTINEL = object()
 
     def __init__(self, records: List[dict], size: int):
-        super().__init__()
         self._records = records
         self._size = size
-        self._cancelled = False
+        self._cancelled = threading.Event()
+        self._q: _queue_mod.Queue = _queue_mod.Queue()
+        self._callback: Optional[Callable] = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._timer = QTimer()
+        self._timer.setInterval(30)
+        self._timer.timeout.connect(self._drain)
+
+    def start(self, callback: Callable):
+        self._callback = callback
+        self._timer.start()
+        self._thread.start()
 
     def cancel(self):
-        self._cancelled = True
+        self._cancelled.set()
+        self._callback = None
+        self._timer.stop()
+        # Drain so the worker thread can put() and exit without blocking
+        while not self._q.empty():
+            try:
+                self._q.get_nowait()
+            except _queue_mod.Empty:
+                break
 
-    def run(self):
-        from PIL import Image
+    def _run(self):
         for i, rec in enumerate(self._records):
-            if self._cancelled:
+            if self._cancelled.is_set():
                 break
             path = rec.get("local_path", "")
             ext = rec.get("ext", "").lower()
             try:
-                pix = self._load_one(path, ext)
+                img = self._load_one(path, ext)
             except Exception as e:
                 _log.debug("Thumbnail failed for %s: %s", path, e)
-                pix = self._placeholder(ext)
-            self.thumbnail_ready.emit(i, pix)
-        self.finished_all.emit()
+                img = _make_placeholder(self._size, ext)
+            self._q.put((i, img))
+        self._q.put(self._SENTINEL)
 
-    def _load_one(self, path: str, ext: str) -> QPixmap:
-        from PIL import Image
+    def _drain(self):
+        cb = self._callback
+        if cb is None:
+            return
+        try:
+            while True:
+                item = self._q.get_nowait()
+                if item is self._SENTINEL:
+                    self._timer.stop()
+                    return
+                i, img = item
+                cb(i, img)
+        except _queue_mod.Empty:
+            pass
+
+    def _load_one(self, path: str, ext: str) -> QImage:
         if ext == ".heic" and not _HEIC_OK:
-            return self._placeholder(".heic")
+            return _make_placeholder(self._size, ".heic")
         if ext in (".mov", ".mp4", ".m4v", ".avi", ".3gp"):
-            return self._video_placeholder()
-        with Image.open(path) as img:
-            img = img.convert("RGB")
-            img.thumbnail((self._size, self._size), Image.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-        pix = QPixmap()
-        pix.loadFromData(buf.getvalue())
-        return pix
+            return _make_video_placeholder(self._size)
+        try:
+            from PIL import Image
+            with Image.open(path) as img:
+                img = img.convert("RGB")
+                img.thumbnail((self._size, self._size), Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+            qimg = QImage()
+            qimg.loadFromData(buf.getvalue())
+            return qimg
+        except ImportError:
+            pass
+        # Qt native fallback — QImage is safe to create in any thread
+        qimg = QImage(path)
+        if qimg.isNull():
+            return _make_placeholder(self._size, ext)
+        return qimg.scaled(self._size, self._size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-    def _placeholder(self, ext: str) -> QPixmap:
-        pix = QPixmap(self._size, self._size)
-        pix.fill(QColor("#f0f0f0"))
-        p = QPainter(pix)
-        p.setPen(QColor(INK_MUTED))
-        p.setFont(QFont(FONT_FAMILY.split(",")[0].strip(), 9))
-        label = "HEIC\n(install pillow-heif)" if ext == ".heic" else ext.upper()
-        p.drawText(pix.rect(), Qt.AlignCenter, label)
-        p.end()
-        return pix
 
-    def _video_placeholder(self) -> QPixmap:
-        pix = QPixmap(self._size, self._size)
-        pix.fill(QColor("#1a1a1a"))
-        p = QPainter(pix)
-        p.setPen(QColor("#ffffff"))
-        p.setFont(QFont(FONT_FAMILY.split(",")[0].strip(), 28))
-        p.drawText(pix.rect(), Qt.AlignCenter, "▶")
-        p.end()
-        return pix
+def _make_placeholder(size: int, ext: str) -> QImage:
+    img = QImage(size, size, QImage.Format_RGB32)
+    img.fill(QColor("#f0f0f0"))
+    p = QPainter(img)
+    p.setPen(QColor(INK_MUTED))
+    p.setFont(QFont(FONT_FAMILY.split(",")[0].strip(), 9))
+    label = "HEIC\n(install pillow-heif)" if ext == ".heic" else ext.upper()
+    p.drawText(img.rect(), Qt.AlignCenter, label)
+    p.end()
+    return img
+
+
+def _make_video_placeholder(size: int) -> QImage:
+    img = QImage(size, size, QImage.Format_RGB32)
+    img.fill(QColor("#1a1a1a"))
+    p = QPainter(img)
+    p.setPen(QColor("#ffffff"))
+    p.setFont(QFont(FONT_FAMILY.split(",")[0].strip(), 28))
+    p.drawText(img.rect(), Qt.AlignCenter, "▶")
+    p.end()
+    return img
 
 
 class _ThumbCell(QWidget):
@@ -229,6 +278,15 @@ class PhotosView(QWidget):
         trow.addWidget(self._export_btn)
         layout.addWidget(toolbar)
 
+    def _stop_loader(self):
+        if self._loader is not None:
+            self._loader.cancel()
+            self._loader = None
+
+    def closeEvent(self, event):
+        self._stop_loader()
+        super().closeEvent(event)
+
     def load_records(self, records: List[dict]):
         self._all_records = records
         self._filtered = records
@@ -243,11 +301,7 @@ class PhotosView(QWidget):
             self._count_label.setText("Loading…")
 
     def _rebuild_grid(self, records: List[dict]):
-        if self._loader:
-            self._loader.cancel()
-            self._loader.quit()
-            self._loader.wait(500)
-            self._loader = None
+        self._stop_loader()
 
         # Clear old cells
         for cell in self._cells:
@@ -272,8 +326,7 @@ class PhotosView(QWidget):
 
         # Start background thumbnail loading
         self._loader = _ThumbnailLoader(records, THUMB_IMG)
-        self._loader.thumbnail_ready.connect(self._on_thumb_ready)
-        self._loader.start()
+        self._loader.start(self._on_thumb_ready)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -281,9 +334,9 @@ class PhotosView(QWidget):
             # Reflow grid on resize
             QTimer.singleShot(100, lambda: self._rebuild_grid(self._filtered))
 
-    def _on_thumb_ready(self, index: int, pix: QPixmap):
+    def _on_thumb_ready(self, index: int, img: QImage):
         if 0 <= index < len(self._cells):
-            self._cells[index].set_pixmap(pix)
+            self._cells[index].set_pixmap(QPixmap.fromImage(img))
 
     def _on_search(self, text: str):
         q = text.strip().lower()

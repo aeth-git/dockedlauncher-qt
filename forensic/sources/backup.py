@@ -30,9 +30,6 @@ class BackupSource(DataSource):
 
     def __init__(self, backup_path: str):
         self._root = Path(backup_path)
-        # If user pointed at a parent Backup/ dir, auto-detect
-        if not (self._root / "Manifest.db").exists():
-            self._root = self._find_backup_root(self._root)
         self._file_map: Dict[Tuple[str, str], str] = {}
         self._manifest_hash_before: Optional[str] = None
         self._manifest_hash_after: Optional[str] = None
@@ -46,6 +43,10 @@ class BackupSource(DataSource):
         raise IOError(f"No iTunes backup found in {parent}")
 
     def open(self) -> None:
+        # Auto-detect UUID subdir if Manifest.db isn't directly under root
+        if not (self._root / "Manifest.db").exists():
+            self._root = self._find_backup_root(self._root)
+
         manifest_plist_path = self._root / "Manifest.plist"
         if manifest_plist_path.exists():
             with open(manifest_plist_path, "rb") as f:
