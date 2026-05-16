@@ -4,11 +4,21 @@ import os
 import plistlib
 import shutil
 import sqlite3
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict
 
 import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    from PyQt5.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    yield app
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -326,7 +336,6 @@ def backup_root(tmp_path_factory) -> Path:
                 b"fakevideo", file_map)
 
     # App metadata
-    import json
     whatsapp_meta = plistlib.dumps({
         "itemName": "WhatsApp",
         "bundleShortVersionString": "22.5.1",
@@ -335,6 +344,28 @@ def backup_root(tmp_path_factory) -> Path:
     })
     _place_file(root, "AppDomain-net.whatsapp.WhatsApp",
                 "iTunesMetadata.plist", whatsapp_meta, file_map)
+
+    # New Apple parsers — include in main backup for integration tests
+    _place_file(root, "HomeDomain", "Library/Safari/History.db",
+                _make_safari_db(), file_map)
+    _place_file(root, "AppDomain-group.com.apple.notes", "NoteStore.sqlite",
+                _make_notes_db(), file_map)
+    _place_file(root, "HomeDomain", "Library/Calendar/Calendar.sqlitedb",
+                _make_calendar_db(), file_map)
+    _place_file(root, "HomeDomain", "Library/Voicemail/voicemail.db",
+                _make_voicemail_db(), file_map)
+    _place_file(
+        root,
+        "SystemPreferencesDomain",
+        "Library/Preferences/SystemConfiguration/com.apple.wifi.known-networks.plist",
+        _make_wifi_plist(), file_map,
+    )
+    _place_file(root, "AppDomain-com.viber", "Documents/Inbox.data",
+                _make_viber_messages_db(), file_map)
+    _place_file(root, "AppDomain-jp.naver.line", "Documents/naver_line",
+                _make_line_db(), file_map)
+    _place_file(root, "AppDomain-com.skype.skype", "Documents/main.db",
+                _make_skype_db(), file_map)
 
     # Manifest files
     _build_manifest_db(root, file_map)
@@ -347,10 +378,29 @@ def backup_root(tmp_path_factory) -> Path:
 @pytest.fixture(scope="session")
 def backup_source(backup_root):
     """Opened BackupSource over the synthetic backup."""
-    import sys
     sys.path.insert(0, str(Path(__file__).parents[3]))
     from forensic.sources.backup import BackupSource
     src = BackupSource(str(backup_root))
+    src.open()
+    yield src
+    src.close()
+
+
+@pytest.fixture(scope="session")
+def empty_backup_source(tmp_path_factory):
+    """BackupSource with only the core iOS DBs — new parsers will not find their files."""
+    from forensic.sources.backup import BackupSource
+    root = tmp_path_factory.mktemp("backup_core_only")
+    file_map: Dict = {}
+    _place_file(root, "HomeDomain", "Library/SMS/sms.db", _make_sms_db(), file_map)
+    _place_file(root, "HomeDomain", "Library/CallHistoryDB/CallHistory.storedata",
+                _make_call_db(), file_map)
+    _place_file(root, "HomeDomain", "Library/AddressBook/AddressBook.sqlitedb",
+                _make_contacts_db(), file_map)
+    _build_manifest_db(root, file_map)
+    (root / "Manifest.plist").write_bytes(_make_manifest_plist(encrypted=False))
+    (root / "Info.plist").write_bytes(_make_info_plist())
+    src = BackupSource(str(root))
     src.open()
     yield src
     src.close()
@@ -548,4 +598,297 @@ def whatsapp_no_contact_root(tmp_path_factory) -> Path:
     _build_manifest_db(root, file_map)
     (root / "Manifest.plist").write_bytes(_make_manifest_plist(False))
     (root / "Info.plist").write_bytes(_make_info_plist())
+    return root
+
+
+# ── New Apple parser DB builders ──────────────────────────────────────────
+
+
+def _make_safari_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE history_items (
+            id INTEGER PRIMARY KEY,
+            url TEXT,
+            domain_expansion TEXT,
+            visit_count INTEGER
+        );
+        CREATE TABLE history_visits (
+            id INTEGER PRIMARY KEY,
+            history_item INTEGER,
+            visit_time REAL,
+            title TEXT,
+            load_successful INTEGER
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    conn.execute("INSERT INTO history_items VALUES (1,'https://example.com','example.com',5)")
+    conn.execute("INSERT INTO history_items VALUES (2,'https://news.ycombinator.com','ycombinator.com',2)")
+    conn.execute("INSERT INTO history_visits VALUES (1,1,?,  'Example Domain',1)", (t1,))
+    conn.execute("INSERT INTO history_visits VALUES (2,2,?,  'Hacker News',1)",     (t2,))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_notes_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZICCLOUDSYNCINGOBJECT (
+            Z_PK INTEGER PRIMARY KEY,
+            ZTITLE1 TEXT,
+            ZCREATIONDATE1 REAL,
+            ZMODIFICATIONDATE1 REAL,
+            ZSNIPPET TEXT,
+            ZISPASSWORDPROTECTED INTEGER
+        );
+        CREATE TABLE ZICNOTEDATA (
+            Z_PK INTEGER PRIMARY KEY,
+            ZNOTE INTEGER,
+            ZDATA BLOB
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    conn.execute("INSERT INTO ZICCLOUDSYNCINGOBJECT VALUES (1,'Meeting Notes',?,?,'Key points: ...',0)", (t1, t2))
+    conn.execute("INSERT INTO ZICCLOUDSYNCINGOBJECT VALUES (2,'Shopping List',?,?,'Milk, eggs',0)", (t1, t1))
+    conn.execute("INSERT INTO ZICNOTEDATA VALUES (1,1,NULL)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_calendar_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE Calendar (
+            ROWID INTEGER PRIMARY KEY,
+            title TEXT,
+            color INTEGER
+        );
+        CREATE TABLE CalendarItem (
+            ROWID INTEGER PRIMARY KEY,
+            summary TEXT,
+            location TEXT,
+            description TEXT,
+            start_date REAL,
+            end_date REAL,
+            all_day INTEGER,
+            has_recurrences INTEGER,
+            calendar_id INTEGER
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    conn.execute("INSERT INTO Calendar VALUES (1,'Work',0)")
+    conn.execute("INSERT INTO CalendarItem VALUES (1,'Team Meeting','Conf Room A','Weekly sync',?,?,0,0,1)", (t1, t2))
+    conn.execute("INSERT INTO CalendarItem VALUES (2,'Lunch','Café','Lunch with Alice',?,?,0,0,1)", (t2, t2 + 3600))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_voicemail_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE voicemail (
+            ROWID INTEGER PRIMARY KEY,
+            remote_uid TEXT,
+            date INTEGER,
+            sender TEXT,
+            callback_num TEXT,
+            duration INTEGER,
+            expiration INTEGER,
+            trashed_date INTEGER,
+            flags INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO voicemail VALUES (1,'uid1',1655287200,'+15551234567','+15551234567',45,0,0,0)")
+    conn.execute("INSERT INTO voicemail VALUES (2,'uid2',1655290800,'+15559876543',NULL,          30,0,1655291000,0)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_viber_messages_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZVIBERMESSAGE (
+            ZMESSAGE_ID TEXT PRIMARY KEY,
+            ZTEXT TEXT,
+            ZTIMESTAMP INTEGER,
+            ZCONVERSATION_ID TEXT,
+            ZSENDER_VIBER_ID TEXT,
+            ZDIRECTION INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO ZVIBERMESSAGE VALUES ('v1','Hi Viber!',1655287200,'conv1','alice',0)")
+    conn.execute("INSERT INTO ZVIBERMESSAGE VALUES ('v2','Viber back',1655290800,'conv1','me',   1)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_line_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE contact (
+            mid TEXT PRIMARY KEY,
+            m_name TEXT
+        );
+        CREATE TABLE chat_history (
+            id TEXT PRIMARY KEY,
+            chat_id TEXT,
+            from_mid TEXT,
+            content TEXT,
+            deliver_time INTEGER,
+            type INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO contact VALUES ('u_alice','Alice')")
+    conn.execute("INSERT INTO chat_history VALUES ('l1','chat_abc','u_alice','Hello LINE!',1655287200000,1)")
+    conn.execute("INSERT INTO chat_history VALUES ('l2','chat_abc','u0',     'LINE reply', 1655290800000,1)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_skype_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE Conversations (
+            id INTEGER PRIMARY KEY,
+            displayname TEXT
+        );
+        CREATE TABLE Contacts (
+            skypename TEXT PRIMARY KEY,
+            displayname TEXT
+        );
+        CREATE TABLE Messages (
+            id INTEGER PRIMARY KEY,
+            body_xml TEXT,
+            timestamp INTEGER,
+            author TEXT,
+            from_dispname TEXT,
+            convo_id INTEGER,
+            type INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO Conversations VALUES (1,'Alice Skype')")
+    conn.execute("INSERT INTO Contacts VALUES ('alice.skype','Alice')")
+    conn.execute("INSERT INTO Messages VALUES (1,'<p>Hello Skype!</p>',1655287200,'alice.skype','Alice',1,61)")
+    conn.execute("INSERT INTO Messages VALUES (2,'<p>Skype reply</p>',  1655290800,'me.skype',  'Me',   1,61)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_wifi_plist() -> bytes:
+    data = {
+        "List of known networks": [
+            {
+                "SSID_STR": "HomeNetwork",
+                "BSSID": "aa:bb:cc:dd:ee:ff",
+                "SecurityType": "WPA2 Personal",
+                "lastJoined": "2022-06-15 10:00:00 +0000",
+            },
+            {
+                "SSID_STR": "OfficeWiFi",
+                "BSSID": "11:22:33:44:55:66",
+                "SecurityType": "WPA2 Enterprise",
+                "lastJoined": "2022-06-14 09:00:00 +0000",
+            },
+        ]
+    }
+    return plistlib.dumps(data)
+
+
+# ── New fixtures ──────────────────────────────────────────────────────────
+
+@pytest.fixture(scope="session")
+def safari_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_safari")
+    _minimal_backup(root, "HomeDomain", "Library/Safari/History.db", _make_safari_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def notes_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_notes")
+    _minimal_backup(root, "AppDomain-group.com.apple.notes", "NoteStore.sqlite",
+                    _make_notes_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def calendar_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_calendar")
+    _minimal_backup(root, "HomeDomain", "Library/Calendar/Calendar.sqlitedb",
+                    _make_calendar_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def voicemail_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_voicemail")
+    _minimal_backup(root, "HomeDomain", "Library/Voicemail/voicemail.db",
+                    _make_voicemail_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def viber_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_viber")
+    _minimal_backup(root, "AppDomain-com.viber", "Documents/Inbox.data",
+                    _make_viber_messages_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def line_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_line")
+    _minimal_backup(root, "AppDomain-jp.naver.line", "Documents/naver_line",
+                    _make_line_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def skype_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_skype")
+    _minimal_backup(root, "AppDomain-com.skype.skype", "Documents/main.db",
+                    _make_skype_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def wifi_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_wifi")
+    _minimal_backup(
+        root,
+        "SystemPreferencesDomain",
+        "Library/Preferences/SystemConfiguration/com.apple.wifi.known-networks.plist",
+        _make_wifi_plist(),
+    )
     return root

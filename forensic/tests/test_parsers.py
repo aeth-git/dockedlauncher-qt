@@ -1,5 +1,6 @@
 """End-to-end parser tests against synthetic backup data."""
 import pytest
+from pathlib import Path
 from forensic.parsers.messages import SMSParser
 from forensic.parsers.calls import CallParser
 from forensic.parsers.contacts import ContactsParser
@@ -663,3 +664,544 @@ class TestInstagramParser:
             assert any("Instagram" in b for b in bodies)
         finally:
             src.close()
+
+
+# ── Safari ────────────────────────────────────────────────────────────────────
+
+from forensic.parsers.safari import SafariParser
+from forensic.parsers.notes import NotesParser
+from forensic.parsers.calendar import CalendarParser
+from forensic.parsers.voicemail import VoicemailParser
+from forensic.parsers.thirdparty.viber import ViberParser
+from forensic.parsers.thirdparty.line import LINEParser
+from forensic.parsers.thirdparty.skype import SkypeParser
+from forensic.parsers.wifi import WiFiParser
+
+
+class TestSafariParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="History.db not found"):
+            SafariParser(empty_backup_source).parse()
+
+    def test_returns_two_visits(self, safari_root):
+        src = _open(safari_root)
+        try:
+            records = SafariParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, safari_root):
+        src = _open(safari_root)
+        try:
+            records = SafariParser(src).parse()
+            for r in records:
+                assert {"url", "title", "timestamp", "visit_count"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_url_present(self, safari_root):
+        src = _open(safari_root)
+        try:
+            records = SafariParser(src).parse()
+            urls = [r["url"] for r in records]
+            assert any("example.com" in u for u in urls)
+        finally:
+            src.close()
+
+    def test_timestamps_are_2022(self, safari_root):
+        src = _open(safari_root)
+        try:
+            records = SafariParser(src).parse()
+            for r in records:
+                assert r["timestamp"] is not None
+                assert "2022-06-15" in r["timestamp"]
+        finally:
+            src.close()
+
+    def test_visit_count_positive(self, safari_root):
+        src = _open(safari_root)
+        try:
+            records = SafariParser(src).parse()
+            assert all(r["visit_count"] >= 1 for r in records)
+        finally:
+            src.close()
+
+
+# ── Notes ─────────────────────────────────────────────────────────────────────
+
+class TestNotesParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            NotesParser(empty_backup_source).parse()
+
+    def test_returns_two_notes(self, notes_root):
+        src = _open(notes_root)
+        try:
+            records = NotesParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, notes_root):
+        src = _open(notes_root)
+        try:
+            records = NotesParser(src).parse()
+            for r in records:
+                assert {"title", "snippet", "created", "modified", "locked"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_title_present(self, notes_root):
+        src = _open(notes_root)
+        try:
+            records = NotesParser(src).parse()
+            titles = [r["title"] for r in records]
+            assert any("Meeting" in t for t in titles)
+        finally:
+            src.close()
+
+    def test_locked_field_is_bool(self, notes_root):
+        src = _open(notes_root)
+        try:
+            records = NotesParser(src).parse()
+            assert all(isinstance(r["locked"], bool) for r in records)
+        finally:
+            src.close()
+
+    def test_timestamps_present(self, notes_root):
+        src = _open(notes_root)
+        try:
+            records = NotesParser(src).parse()
+            for r in records:
+                assert r["modified"] is not None
+        finally:
+            src.close()
+
+
+# ── Calendar ──────────────────────────────────────────────────────────────────
+
+class TestCalendarParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            CalendarParser(empty_backup_source).parse()
+
+    def test_returns_two_events(self, calendar_root):
+        src = _open(calendar_root)
+        try:
+            records = CalendarParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, calendar_root):
+        src = _open(calendar_root)
+        try:
+            records = CalendarParser(src).parse()
+            for r in records:
+                assert {"title", "start", "end", "all_day", "recurring", "calendar"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_title_present(self, calendar_root):
+        src = _open(calendar_root)
+        try:
+            records = CalendarParser(src).parse()
+            titles = [r["title"] for r in records]
+            assert any("Meeting" in t for t in titles)
+        finally:
+            src.close()
+
+    def test_timestamps_are_2022(self, calendar_root):
+        src = _open(calendar_root)
+        try:
+            records = CalendarParser(src).parse()
+            for r in records:
+                assert r["start"] is not None and "2022-06-15" in r["start"]
+        finally:
+            src.close()
+
+    def test_calendar_name_populated(self, calendar_root):
+        src = _open(calendar_root)
+        try:
+            records = CalendarParser(src).parse()
+            assert all(r["calendar"] for r in records)
+        finally:
+            src.close()
+
+
+# ── Voicemail ─────────────────────────────────────────────────────────────────
+
+class TestVoicemailParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            VoicemailParser(empty_backup_source).parse()
+
+    def test_returns_two_records(self, voicemail_root):
+        src = _open(voicemail_root)
+        try:
+            records = VoicemailParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, voicemail_root):
+        src = _open(voicemail_root)
+        try:
+            records = VoicemailParser(src).parse()
+            for r in records:
+                assert {"timestamp", "sender", "duration", "trashed"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_sender_populated(self, voicemail_root):
+        src = _open(voicemail_root)
+        try:
+            records = VoicemailParser(src).parse()
+            senders = [r["sender"] for r in records if r["sender"]]
+            assert len(senders) >= 1
+        finally:
+            src.close()
+
+    def test_trashed_flag(self, voicemail_root):
+        src = _open(voicemail_root)
+        try:
+            records = VoicemailParser(src).parse()
+            # second record has trashed_date > 0
+            trashed = [r for r in records if r["trashed"]]
+            assert len(trashed) == 1
+        finally:
+            src.close()
+
+    def test_duration_formatted(self, voicemail_root):
+        src = _open(voicemail_root)
+        try:
+            records = VoicemailParser(src).parse()
+            for r in records:
+                assert isinstance(r["duration"], str)
+                assert "s" in r["duration"]
+        finally:
+            src.close()
+
+
+# ── Viber ─────────────────────────────────────────────────────────────────────
+
+class TestViberParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            ViberParser(empty_backup_source).parse()
+
+    def test_returns_two_messages(self, viber_root):
+        src = _open(viber_root)
+        try:
+            records = ViberParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, viber_root):
+        src = _open(viber_root)
+        try:
+            records = ViberParser(src).parse()
+            for r in records:
+                assert {"id", "timestamp", "body", "contact", "direction", "app"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_app_label(self, viber_root):
+        src = _open(viber_root)
+        try:
+            records = ViberParser(src).parse()
+            assert all(r["app"] == "Viber" for r in records)
+        finally:
+            src.close()
+
+    def test_direction_values(self, viber_root):
+        src = _open(viber_root)
+        try:
+            records = ViberParser(src).parse()
+            directions = {r["direction"] for r in records}
+            assert directions == {"Sent", "Received"}
+        finally:
+            src.close()
+
+    def test_body_present(self, viber_root):
+        src = _open(viber_root)
+        try:
+            records = ViberParser(src).parse()
+            assert any("Viber" in r["body"] for r in records)
+        finally:
+            src.close()
+
+
+# ── LINE ──────────────────────────────────────────────────────────────────────
+
+class TestLINEParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            LINEParser(empty_backup_source).parse()
+
+    def test_returns_two_messages(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            for r in records:
+                assert {"id", "timestamp", "body", "contact", "app"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_app_label(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            assert all(r["app"] == "LINE" for r in records)
+        finally:
+            src.close()
+
+    def test_contact_resolved(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            contacts = [r["contact"] for r in records if r["contact"]]
+            assert any("Alice" in c for c in contacts)
+        finally:
+            src.close()
+
+    def test_body_present(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            assert any("LINE" in r["body"] for r in records)
+        finally:
+            src.close()
+
+
+# ── Skype ─────────────────────────────────────────────────────────────────────
+
+class TestSkypeParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            SkypeParser(empty_backup_source).parse()
+
+    def test_returns_two_messages(self, skype_root):
+        src = _open(skype_root)
+        try:
+            records = SkypeParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, skype_root):
+        src = _open(skype_root)
+        try:
+            records = SkypeParser(src).parse()
+            for r in records:
+                assert {"id", "timestamp", "body", "contact", "app"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_app_label(self, skype_root):
+        src = _open(skype_root)
+        try:
+            records = SkypeParser(src).parse()
+            assert all(r["app"] == "Skype" for r in records)
+        finally:
+            src.close()
+
+    def test_xml_tags_stripped(self, skype_root):
+        src = _open(skype_root)
+        try:
+            records = SkypeParser(src).parse()
+            for r in records:
+                assert "<p>" not in r["body"]
+                assert "Hello Skype" in r["body"] or "Skype reply" in r["body"]
+        finally:
+            src.close()
+
+    def test_contact_name_resolved(self, skype_root):
+        src = _open(skype_root)
+        try:
+            records = SkypeParser(src).parse()
+            contacts = [r["contact"] for r in records if r["contact"]]
+            assert any("Alice" in c for c in contacts)
+        finally:
+            src.close()
+
+
+# ── WiFi ──────────────────────────────────────────────────────────────────────
+
+class TestWiFiParser:
+    def test_not_found_raises(self, empty_backup_source):
+        with pytest.raises(ParserError, match="not found"):
+            WiFiParser(empty_backup_source).parse()
+
+    def test_returns_two_networks(self, wifi_root):
+        src = _open(wifi_root)
+        try:
+            records = WiFiParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_required_fields(self, wifi_root):
+        src = _open(wifi_root)
+        try:
+            records = WiFiParser(src).parse()
+            for r in records:
+                assert {"ssid", "bssid", "security"}.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_ssid_present(self, wifi_root):
+        src = _open(wifi_root)
+        try:
+            records = WiFiParser(src).parse()
+            ssids = [r["ssid"] for r in records]
+            assert "HomeNetwork" in ssids
+            assert "OfficeWiFi" in ssids
+        finally:
+            src.close()
+
+    def test_bssid_present(self, wifi_root):
+        src = _open(wifi_root)
+        try:
+            records = WiFiParser(src).parse()
+            assert all(r["bssid"] for r in records)
+        finally:
+            src.close()
+
+
+# ── Report generator ──────────────────────────────────────────────────────────
+
+class TestReportGenerator:
+    def test_html_report_generates(self):
+        from forensic.report import generate_html_report
+        html = generate_html_report(
+            device_info={"name": "Test iPhone", "ios_version": "16.3.1",
+                         "serial": "ABCD", "imei": "123", "udid": "u1"},
+            source_path="/tmp/backup",
+            manifest_hash="abc123",
+            sections={"SMS": [{"timestamp": "2022-06-15 10:00:00", "body": "Hello"}]},
+            examiner="Tester",
+            case_number="CASE-001",
+        )
+        assert "<!DOCTYPE html>" in html
+        assert "CASE-001" in html
+        assert "Test iPhone" in html
+        assert "abc123" in html
+
+    def test_html_escapes_xss(self):
+        from forensic.report import generate_html_report
+        html = generate_html_report(
+            device_info={},
+            source_path="<script>alert(1)</script>",
+            manifest_hash=None,
+            sections={},
+        )
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_section_records_included(self):
+        from forensic.report import generate_html_report
+        recs = [{"url": "https://example.com", "title": "Example"}]
+        html = generate_html_report(
+            device_info={}, source_path="/tmp", manifest_hash=None,
+            sections={"Safari History": recs},
+        )
+        assert "Safari History" in html
+        assert "example.com" in html
+
+    def test_html_export_writes_file(self, tmp_path):
+        from forensic.report import export_html
+        path = str(tmp_path / "report.html")
+        export_html(path, device_info={}, source_path="/tmp", manifest_hash=None,
+                    sections={}, examiner="T", case_number="C1")
+        content = Path(path).read_text(encoding="utf-8")
+        assert "<!DOCTYPE html>" in content
+
+
+# ── Timeline ──────────────────────────────────────────────────────────────────
+
+class TestTimelineView:
+    @pytest.fixture(autouse=True)
+    def setup(self, qapp):
+        from forensic.views.timeline_view import TimelineView
+        self.view = TimelineView()
+        yield
+        self.view.close()
+
+    def test_initial_empty(self):
+        assert self.view._all_events == []
+
+    def test_feed_sms_records(self):
+        self.view.feed_records("sms", "SMS", [
+            {"timestamp": "2022-06-15 10:00:00", "body": "Hello", "sent": True},
+        ])
+        assert len(self.view._all_events) == 1
+        assert self.view._all_events[0]["event_type"] == "sms"
+
+    def test_feed_multiple_types(self):
+        self.view.feed_records("sms", "SMS", [
+            {"timestamp": "2022-06-15 10:00:00", "body": "msg"},
+        ])
+        self.view.feed_records("call", "Calls", [
+            {"timestamp": "2022-06-15 11:00:00", "number": "+1555"},
+        ])
+        assert len(self.view._all_events) == 2
+        types = {e["event_type"] for e in self.view._all_events}
+        assert types == {"sms", "call"}
+
+    def test_events_sorted_descending(self):
+        self.view.feed_records("sms", "SMS", [
+            {"timestamp": "2022-06-15 08:00:00", "body": "early"},
+            {"timestamp": "2022-06-15 12:00:00", "body": "late"},
+        ])
+        ts = [e["timestamp"] for e in self.view._all_events]
+        assert ts == sorted(ts, reverse=True)
+
+
+# ── Integration: full backup source includes all new parsers ──────────────────
+
+class TestFullBackupIntegration:
+    """Run all new parsers against the main backup_source (which has every DB)."""
+
+    def test_safari_from_full_backup(self, backup_source):
+        records = SafariParser(backup_source).parse()
+        assert len(records) == 2
+        assert any("example.com" in r["url"] for r in records)
+
+    def test_notes_from_full_backup(self, backup_source):
+        records = NotesParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_calendar_from_full_backup(self, backup_source):
+        records = CalendarParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_voicemail_from_full_backup(self, backup_source):
+        records = VoicemailParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_wifi_from_full_backup(self, backup_source):
+        records = WiFiParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_viber_from_full_backup(self, backup_source):
+        records = ViberParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_line_from_full_backup(self, backup_source):
+        records = LINEParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_skype_from_full_backup(self, backup_source):
+        records = SkypeParser(backup_source).parse()
+        assert len(records) == 2

@@ -65,6 +65,19 @@ CONTACTS_DB = ("HomeDomain", "Library/AddressBook/AddressBook.sqlitedb")
 DCIM_DOMAIN = "CameraRollDomain"
 DCIM_PREFIX = "Media/DCIM"
 
+# --- Apple system DB paths ---
+SAFARI_HISTORY_DB = ("HomeDomain", "Library/Safari/History.db")
+SAFARI_BOOKMARKS_DB = ("HomeDomain", "Library/Safari/Bookmarks.db")
+NOTES_DB = ("AppDomain-group.com.apple.notes", "NoteStore.sqlite")
+CALENDAR_DB = ("HomeDomain", "Library/Calendar/Calendar.sqlitedb")
+VOICEMAIL_DB = ("HomeDomain", "Library/Voicemail/voicemail.db")
+LOCATION_CONSOLIDATED_DB = ("RootDomain", "Library/Caches/locationd/consolidated.db")
+LOCATION_ROUTINED_DB = ("HomeDomain", "Library/Caches/com.apple.routined/Local.sqlite")
+WIFI_KNOWN_NETWORKS = ("SystemPreferencesDomain",
+                       "Library/Preferences/SystemConfiguration/com.apple.wifi.known-networks.plist")
+WIFI_PREFS = ("SystemPreferencesDomain",
+              "Library/Preferences/com.apple.wifi.plist")
+
 # --- Third-party bundles ---
 BUNDLE_WHATSAPP = "net.whatsapp.WhatsApp"
 BUNDLE_TELEGRAM = "ph.telegra.Telegraph"
@@ -72,6 +85,11 @@ BUNDLE_SIGNAL = "org.whispersystems.signal"
 BUNDLE_MESSENGER = "com.facebook.Messenger"
 BUNDLE_INSTAGRAM = "com.burbn.instagram"
 BUNDLE_SNAPCHAT = "com.toyopagroup.picaboo"
+BUNDLE_VIBER = "com.viber"
+BUNDLE_LINE = "jp.naver.line"
+BUNDLE_WECHAT = "com.tencent.xin"
+BUNDLE_DISCORD = "com.hammerandchisel.discord"
+BUNDLE_SKYPE = "com.skype.skype"
 
 # ABMultiValue property codes
 AB_PROP_PHONE = 3

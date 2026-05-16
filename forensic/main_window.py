@@ -28,6 +28,16 @@ from .views.calls_view import CallsView
 from .views.contacts_view import ContactsView
 from .views.photos_view import PhotosView
 from .views.apps_view import AppsView
+from .views.safari_view import SafariView
+from .views.notes_view import NotesView
+from .views.calendar_view import CalendarView
+from .views.voicemail_view import VoicemailView
+from .views.location_view import LocationView
+from .views.wifi_view import WiFiView
+from .views.mail_view import MailView
+from .views.screentime_view import ScreenTimeView
+from .views.timeline_view import TimelineView
+from .views.report_view import ReportView
 
 _log = get_logger("main_window")
 
@@ -359,17 +369,37 @@ class ForensicWindow(QMainWindow):
         tabs.setStyleSheet(MAIN_TAB_QSS)
         tabs.setDocumentMode(True)
 
-        self._msg_view      = MessagesView(case_log=self._case_log)
-        self._calls_view    = CallsView(case_log=self._case_log)
-        self._contacts_view = ContactsView(case_log=self._case_log)
-        self._photos_view   = PhotosView(case_log=self._case_log)
-        self._apps_view     = AppsView(case_log=self._case_log)
+        self._msg_view        = MessagesView(case_log=self._case_log)
+        self._calls_view      = CallsView(case_log=self._case_log)
+        self._contacts_view   = ContactsView(case_log=self._case_log)
+        self._photos_view     = PhotosView(case_log=self._case_log)
+        self._apps_view       = AppsView(case_log=self._case_log)
+        self._safari_view     = SafariView(case_log=self._case_log)
+        self._notes_view      = NotesView(case_log=self._case_log)
+        self._calendar_view   = CalendarView(case_log=self._case_log)
+        self._voicemail_view  = VoicemailView(case_log=self._case_log)
+        self._location_view   = LocationView(case_log=self._case_log)
+        self._wifi_view       = WiFiView(case_log=self._case_log)
+        self._mail_view       = MailView(case_log=self._case_log)
+        self._screentime_view = ScreenTimeView(case_log=self._case_log)
+        self._timeline_view   = TimelineView(case_log=self._case_log)
+        self._report_view     = ReportView()
 
-        tabs.addTab(self._msg_view,      "Messages")
-        tabs.addTab(self._calls_view,    "Calls")
-        tabs.addTab(self._contacts_view, "Contacts")
-        tabs.addTab(self._photos_view,   "Photos")
-        tabs.addTab(self._apps_view,     "Apps")
+        tabs.addTab(self._timeline_view,   "Timeline")
+        tabs.addTab(self._msg_view,        "Messages")
+        tabs.addTab(self._calls_view,      "Calls")
+        tabs.addTab(self._voicemail_view,  "Voicemail")
+        tabs.addTab(self._contacts_view,   "Contacts")
+        tabs.addTab(self._photos_view,     "Photos")
+        tabs.addTab(self._safari_view,     "Safari")
+        tabs.addTab(self._mail_view,       "Mail")
+        tabs.addTab(self._notes_view,      "Notes")
+        tabs.addTab(self._calendar_view,   "Calendar")
+        tabs.addTab(self._location_view,   "Location")
+        tabs.addTab(self._wifi_view,       "WiFi")
+        tabs.addTab(self._screentime_view, "Screen Time")
+        tabs.addTab(self._apps_view,       "Apps")
+        tabs.addTab(self._report_view,     "Report")
 
         return tabs
 
@@ -479,10 +509,14 @@ class ForensicWindow(QMainWindow):
         device_info = src.get_device_info()
 
         # Log to case log
-        if hasattr(src, "manifest_hash") and src.manifest_hash():
-            self._case_log.log_source_opened(path, src.manifest_hash())
+        mhash = src.manifest_hash() if hasattr(src, "manifest_hash") else None
+        if mhash:
+            self._case_log.log_source_opened(path, mhash)
         else:
             self._case_log.log_source_opened(path)
+
+        # Wire report view
+        self._report_view.set_source(path, device_info, mhash)
 
         # Show slim bar + switch to tabs
         self._slim_bar.set_source(label, device_info)
@@ -498,53 +532,133 @@ class ForensicWindow(QMainWindow):
         self._session_token += 1
         token = self._session_token
 
-        self._status.showMessage("Loading data… 0 / 12")
+        self._total_count = 22
         self._loaded_count = 0
-        self._total_count = 12  # SMS, Calls, Contacts, Photos, Apps + 7 messaging apps
+        self._status.showMessage(f"Loading data… 0 / {self._total_count}")
 
-        # Standard parsers
+        # ── Apple system parsers ─────────────────────────────────────────────
         from .parsers.messages  import SMSParser
         from .parsers.calls     import CallParser
         from .parsers.contacts  import ContactsParser
         from .parsers.photos    import PhotoIndexer
         from .parsers.apps      import InstalledAppsParser
+        from .parsers.safari    import SafariParser
+        from .parsers.notes     import NotesParser
+        from .parsers.calendar  import CalendarParser
+        from .parsers.voicemail import VoicemailParser
+        from .parsers.location  import LocationParser
+        from .parsers.wifi      import WiFiParser
+        from .parsers.mail      import MailParser
+        from .parsers.screentime import ScreenTimeParser
+
+        def _tl(etype, recs):
+            self._timeline_view.feed_records(etype, etype.capitalize(), recs)
+
+        def _report(name, recs):
+            self._report_view.add_section(name, recs)
 
         self._launch(token, SMSParser,
-                     lambda recs: self._msg_view.load_app_records("sms", recs),
+                     lambda recs: (self._msg_view.load_app_records("sms", recs),
+                                   _tl("sms", recs), _report("SMS / iMessage", recs)),
                      lambda t, d: self._msg_view.load_app_records("sms", None, t, d))
+
         self._launch(token, CallParser,
-                     lambda recs: self._calls_view.load_records(recs),
+                     lambda recs: (self._calls_view.load_records(recs),
+                                   _tl("call", recs), _report("Call History", recs)),
                      lambda t, d: self._calls_view.show_error(t, d))
+
         self._launch(token, ContactsParser,
-                     lambda recs: self._contacts_view.load_records(recs),
+                     lambda recs: (self._contacts_view.load_records(recs),
+                                   _report("Contacts", recs)),
                      lambda t, d: self._contacts_view.show_error(t, d))
+
         self._launch(token, PhotoIndexer,
-                     lambda recs: self._photos_view.load_records(recs),
-                     lambda t, d: self._photos_view.show_error(t, d) if hasattr(self._photos_view, 'show_error') else None)
+                     lambda recs: (self._photos_view.load_records(recs),
+                                   _tl("photo", recs), _report("Photos", recs)),
+                     lambda t, d: None)
+
         self._launch(token, InstalledAppsParser,
-                     lambda recs: self._apps_view.load_records(recs),
+                     lambda recs: (self._apps_view.load_records(recs),
+                                   _report("Installed Apps", recs)),
                      lambda t, d: self._apps_view.show_error(t, d))
 
-        # Third-party messaging apps
+        self._launch(token, SafariParser,
+                     lambda recs: (self._safari_view.load_records(recs),
+                                   _tl("safari", recs), _report("Safari History", recs)),
+                     lambda t, d: self._safari_view.show_error(t, d))
+
+        self._launch(token, NotesParser,
+                     lambda recs: (self._notes_view.load_records(recs),
+                                   _tl("note", recs), _report("Notes", recs)),
+                     lambda t, d: self._notes_view.show_error(t, d))
+
+        self._launch(token, CalendarParser,
+                     lambda recs: (self._calendar_view.load_records(recs),
+                                   _tl("calendar", recs), _report("Calendar Events", recs)),
+                     lambda t, d: self._calendar_view.show_error(t, d))
+
+        self._launch(token, VoicemailParser,
+                     lambda recs: (self._voicemail_view.load_records(recs),
+                                   _tl("voicemail", recs), _report("Voicemail", recs)),
+                     lambda t, d: self._voicemail_view.show_error(t, d))
+
+        self._launch(token, LocationParser,
+                     lambda recs: (self._location_view.load_records(recs),
+                                   _tl("location", recs), _report("Location History", recs)),
+                     lambda t, d: self._location_view.show_error(t, d))
+
+        self._launch(token, WiFiParser,
+                     lambda recs: (self._wifi_view.load_records(recs),
+                                   _report("Known WiFi Networks", recs)),
+                     lambda t, d: self._wifi_view.show_error(t, d))
+
+        self._launch(token, MailParser,
+                     lambda recs: (self._mail_view.load_records(recs),
+                                   _tl("mail", recs), _report("Mail", recs)),
+                     lambda t, d: self._mail_view.show_error(t, d))
+
+        self._launch(token, ScreenTimeParser,
+                     lambda recs: (self._screentime_view.load_records(recs),
+                                   _report("Screen Time", recs)),
+                     lambda t, d: self._screentime_view.show_error(t, d))
+
+        # ── Third-party messaging ────────────────────────────────────────────
         from .parsers.thirdparty.whatsapp  import WhatsAppParser
         from .parsers.thirdparty.telegram  import TelegramParser
         from .parsers.thirdparty.signal    import SignalParser
         from .parsers.thirdparty.messenger import MessengerParser
         from .parsers.thirdparty.instagram import InstagramParser
         from .parsers.thirdparty.snapchat  import SnapchatParser
+        from .parsers.thirdparty.viber     import ViberParser
+        from .parsers.thirdparty.line      import LINEParser
+        from .parsers.thirdparty.wechat    import WeChatParser
+        from .parsers.thirdparty.discord   import DiscordParser
+        from .parsers.thirdparty.skype     import SkypeParser
 
-        for key, parser_cls in [
-            ("whatsapp",  WhatsAppParser),
-            ("telegram",  TelegramParser),
-            ("signal",    SignalParser),
-            ("messenger", MessengerParser),
-            ("instagram", InstagramParser),
-            ("snapchat",  SnapchatParser),
+        for key, label, parser_cls in [
+            ("whatsapp",  "WhatsApp",  WhatsAppParser),
+            ("telegram",  "Telegram",  TelegramParser),
+            ("signal",    "Signal",    SignalParser),
+            ("messenger", "Messenger", MessengerParser),
+            ("instagram", "Instagram", InstagramParser),
+            ("snapchat",  "Snapchat",  SnapchatParser),
+            ("viber",     "Viber",     ViberParser),
+            ("line",      "LINE",      LINEParser),
+            ("wechat",    "WeChat",    WeChatParser),
+            ("discord",   "Discord",   DiscordParser),
+            ("skype",     "Skype",     SkypeParser),
         ]:
-            k = key   # capture
-            self._launch(token, parser_cls,
-                         lambda recs, k=k: self._msg_view.load_app_records(k, recs),
-                         lambda t, d, k=k: self._msg_view.load_app_records(k, None, t, d))
+            k, lbl = key, label
+
+            def _done(recs, k=k, lbl=lbl):
+                self._msg_view.load_app_records(k, recs)
+                _tl(k, recs)
+                _report(lbl, recs)
+
+            def _err(t, d, k=k):
+                self._msg_view.load_app_records(k, None, t, d)
+
+            self._launch(token, parser_cls, _done, _err)
 
     def _launch(self, token, parser_cls, on_done, on_error):
         src = self._source
