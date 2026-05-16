@@ -367,6 +367,47 @@ def backup_root(tmp_path_factory) -> Path:
     _place_file(root, "AppDomain-com.skype.skype", "Documents/main.db",
                 _make_skype_db(), file_map)
 
+    # Second-round Apple parsers
+    _place_file(root, "HomeDomain",
+                "Library/CoreDuet/Knowledge/knowledgeC.db",
+                _make_knowledgec_db(), file_map)
+    _place_file(root, "HomeDomain",
+                "Library/CoreDuet/People/interactionC.db",
+                _make_interactionc_db(), file_map)
+    _place_file(root, "HomeDomain", "Library/TCC/TCC.db",
+                _make_tcc_db(), file_map)
+    _place_file(root, "WirelessDomain",
+                "Library/Databases/DataUsage.sqlite",
+                _make_data_usage_db(), file_map)
+    _place_file(root, "HomeDomain",
+                "Library/Accounts/Accounts3.sqlite",
+                _make_accounts_db(), file_map)
+    _place_file(root, "HomeDomain",
+                "Library/Passes/passes23.sqlite",
+                _make_wallet_db(), file_map)
+    _place_file(root, "HomeDomain",
+                "Library/Reminders/Container_v1/Stores/Data-ABCDEF.sqlite",
+                _make_reminders_db(), file_map)
+    _place_file(root, "SystemPreferencesDomain",
+                "Library/Preferences/com.apple.MobileBluetooth.devices.plist",
+                _make_bluetooth_plist(), file_map)
+    _place_file(root, "HomeDomain",
+                "Library/MobileInstallation/UninstalledApplications.plist",
+                _make_uninstalled_plist(), file_map)
+    _place_file(root, "HomeDomain",
+                "Library/Health/healthdb_secure.sqlite",
+                _make_health_db(), file_map)
+    _place_file(root, "AppDomain-com.kik.chat", "kik.sqlite",
+                _make_kik_db(), file_map)
+    # Biome SEGB streams
+    _segb = _make_segb_file()
+    _place_file(root, "HomeDomain",
+                "Library/Biome/streams/restricted/_DKEvent.App.inFocus/local/abc123",
+                _segb, file_map)
+    _place_file(root, "HomeDomain",
+                "Library/Biome/streams/public/NowPlaying/local/def456",
+                _segb, file_map)
+
     # Manifest files
     _build_manifest_db(root, file_map)
     (root / "Manifest.plist").write_bytes(_make_manifest_plist(encrypted=False))
@@ -891,4 +932,491 @@ def wifi_root(tmp_path_factory) -> Path:
         "Library/Preferences/SystemConfiguration/com.apple.wifi.known-networks.plist",
         _make_wifi_plist(),
     )
+    return root
+
+
+# ── Second-round DB builders ──────────────────────────────────────────────
+
+
+def _make_knowledgec_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZOBJECT (
+            Z_PK INTEGER PRIMARY KEY,
+            ZSTREAMNAME TEXT,
+            ZSTARTDATE REAL,
+            ZENDDATE REAL,
+            ZVALUEINTEGER INTEGER,
+            ZVALUESTRING TEXT,
+            ZVALUEDOUBLE REAL,
+            ZSTRUCTUREDMETADATA INTEGER
+        );
+        CREATE TABLE ZSTRUCTUREDMETADATA (
+            Z_PK INTEGER PRIMARY KEY,
+            ZDKAPPINSTALLMETADATAKEY__BUNDLEID TEXT,
+            ZDKNOWPLAYINGMETADATAKEY__TITLE TEXT,
+            ZDKNOWPLAYINGMETADATAKEY__ARTIST TEXT,
+            ZDKNOWPLAYINGMETADATAKEY__ALBUM TEXT,
+            ZDKNOWPLAYINGMETADATAKEY__UNIQUEID TEXT
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    conn.execute("INSERT INTO ZSTRUCTUREDMETADATA VALUES (1,'com.apple.mobilenotes',NULL,NULL,NULL,NULL)")
+    conn.execute("INSERT INTO ZSTRUCTUREDMETADATA VALUES (2,NULL,'Song A','Artist B','Album C','com.apple.Music')")
+    conn.execute("INSERT INTO ZOBJECT VALUES (1,'/app/usage',?,?,180,'com.apple.mobilenotes',NULL,1)", (t1, t2))
+    conn.execute("INSERT INTO ZOBJECT VALUES (2,'/media/nowPlaying',?,?,NULL,NULL,NULL,2)", (t2, t2 + 240))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_interactionc_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZINTERACTIONS (
+            Z_PK INTEGER PRIMARY KEY,
+            ZSTARTDATE REAL,
+            ZENDDATE REAL,
+            ZDIRECTION INTEGER,
+            ZBUNDLEID TEXT,
+            ZISRESPONSE INTEGER,
+            ZCONTACT INTEGER
+        );
+        CREATE TABLE ZCONTACTS (
+            Z_PK INTEGER PRIMARY KEY,
+            ZDISPLAYNAME TEXT,
+            ZPERSONID INTEGER
+        );
+        CREATE TABLE ZATTACHMENTS (
+            Z_PK INTEGER PRIMARY KEY,
+            ZINTERACTION INTEGER,
+            ZATTACHMENT TEXT
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    conn.execute("INSERT INTO ZCONTACTS VALUES (1,'Alice',42)")
+    conn.execute("INSERT INTO ZINTERACTIONS VALUES (1,?,?,0,'com.apple.MobileSMS',0,1)", (t1, t2))
+    conn.execute("INSERT INTO ZINTERACTIONS VALUES (2,?,?,1,'com.apple.MobileSMS',1,1)", (t2, t2 + 60))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_tcc_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE access (
+            service TEXT,
+            client TEXT,
+            client_type INTEGER,
+            auth_value INTEGER,
+            auth_reason INTEGER,
+            last_modified INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO access VALUES ('kTCCServiceCamera','com.example.app',0,2,3,1655287200)")
+    conn.execute("INSERT INTO access VALUES ('kTCCServiceMicrophone','com.example.app',0,2,3,1655290800)")
+    conn.execute("INSERT INTO access VALUES ('kTCCServicePhotos','com.apple.photos',0,2,1,1655290800)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_data_usage_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZPROCESS (
+            Z_PK INTEGER PRIMARY KEY,
+            ZBUNDLENAME TEXT,
+            ZPROCNAME TEXT
+        );
+        CREATE TABLE ZPROCUID (
+            Z_PK INTEGER PRIMARY KEY,
+            ZPROCESS INTEGER,
+            ZWIFIIN INTEGER,
+            ZWIFIOUT INTEGER,
+            ZWIRELESSWANIN INTEGER,
+            ZWIRELESSWANOUT INTEGER,
+            ZTIMESTAMP REAL
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    conn.execute("INSERT INTO ZPROCESS VALUES (1,'com.apple.Safari','Safari')")
+    conn.execute("INSERT INTO ZPROCESS VALUES (2,'com.example.app','ExampleApp')")
+    conn.execute("INSERT INTO ZPROCUID VALUES (1,1,  1024000, 512000, 102400, 51200, ?)", (t1,))
+    conn.execute("INSERT INTO ZPROCUID VALUES (2,2,200000000,50000000,10000000,150000000,?)", (t1,))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_accounts_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZACCOUNTTYPE (
+            Z_PK INTEGER PRIMARY KEY,
+            ZIDENTIFIER TEXT,
+            ZDISPLAYNAME TEXT
+        );
+        CREATE TABLE ZACCOUNT (
+            Z_PK INTEGER PRIMARY KEY,
+            ZUSERNAME TEXT,
+            ZDISPLAYNAME TEXT,
+            ZACCOUNTTYPE INTEGER,
+            ZOAUTH_STATE INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO ZACCOUNTTYPE VALUES (1,'com.apple.account.iCloud','iCloud')")
+    conn.execute("INSERT INTO ZACCOUNTTYPE VALUES (2,'com.google.Gmail','Gmail')")
+    conn.execute("INSERT INTO ZACCOUNT VALUES (1,'alice@icloud.com','Alice',1,1)")
+    conn.execute("INSERT INTO ZACCOUNT VALUES (2,'alice@gmail.com','Alice Gmail',2,1)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_wallet_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZPAYMENTTRANSACTION (
+            Z_PK INTEGER PRIMARY KEY,
+            ZMERCHANTNAME TEXT,
+            ZAMOUNT REAL,
+            ZCURRENCYCODE TEXT,
+            ZLATITUDE REAL,
+            ZLONGITUDE REAL,
+            ZTIMESTAMP REAL,
+            ZPAYMENTINSTRUMENTLASTFOUR TEXT,
+            ZPAYMENTINSTRUMENTTYPE TEXT
+        );
+        CREATE TABLE ZPASS (
+            Z_PK INTEGER PRIMARY KEY,
+            ZPASSTYPE TEXT,
+            ZDESCRIPTION TEXT,
+            ZORGANIZATIONNAME TEXT,
+            ZSERIALNUMBER TEXT,
+            ZEXPIRATIONDATE REAL,
+            ZRELEVANTDATE REAL
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    conn.execute("INSERT INTO ZPAYMENTTRANSACTION VALUES (1,'Coffee Shop',4.50,'USD',37.7749,-122.4194,?,4321,'Visa')", (t1,))
+    conn.execute("INSERT INTO ZPASS VALUES (1,'boardingPass','Flight to NYC','Delta','ABC123',?,?)", (t1 + 86400, t1))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_reminders_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZREMCDOBJECT (
+            Z_PK INTEGER PRIMARY KEY,
+            ZTITLE1 TEXT,
+            ZNOTES TEXT,
+            ZCREATIONDATE REAL,
+            ZLASTMODIFIEDDATE REAL,
+            ZDUEDATE REAL,
+            ZCOMPLETED INTEGER,
+            ZCOMPLETEDDATE REAL
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    conn.execute("INSERT INTO ZREMCDOBJECT VALUES (1,'Buy groceries','Milk, eggs',?,?,?,0,NULL)", (t1, t2, t2 + 3600))
+    conn.execute("INSERT INTO ZREMCDOBJECT VALUES (2,'Call dentist',NULL,?,?,NULL,1,?)", (t1, t2, t2))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_bluetooth_plist() -> bytes:
+    data = {
+        "aa:bb:cc:dd:ee:ff": {
+            "Name": "Alice's AirPods",
+            "LastSeenTime": "2022-06-15 10:00:00 +0000",
+            "ClassOfDevice": "0x240408",
+            "BTDeviceType": "headphones",
+        },
+        "11:22:33:44:55:66": {
+            "Name": "iPhone 13",
+            "LastSeenTime": "2022-06-14 09:00:00 +0000",
+            "ClassOfDevice": "0x5A020C",
+        },
+    }
+    return plistlib.dumps(data)
+
+
+def _make_uninstalled_plist() -> bytes:
+    data = {
+        "com.example.deletedapp": {
+            "UninstallDate": "2022-06-10 08:00:00 +0000",
+        },
+        "com.another.removed": {},
+    }
+    return plistlib.dumps(data)
+
+
+def _make_health_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE data_type (
+            ROWID INTEGER PRIMARY KEY,
+            local_name TEXT
+        );
+        CREATE TABLE sources (
+            ROWID INTEGER PRIMARY KEY,
+            name TEXT
+        );
+        CREATE TABLE samples (
+            ROWID INTEGER PRIMARY KEY,
+            data_type INTEGER,
+            start_date REAL,
+            end_date REAL,
+            value REAL,
+            source_id INTEGER
+        );
+        CREATE TABLE workouts (
+            ROWID INTEGER PRIMARY KEY,
+            workout_activity_type TEXT,
+            start_date REAL,
+            end_date REAL,
+            duration REAL,
+            total_distance REAL,
+            total_energy_burned REAL
+        );
+    """)
+    t1 = 1655287200 - APPLE_EPOCH
+    conn.execute("INSERT INTO data_type VALUES (7,'Steps')")
+    conn.execute("INSERT INTO data_type VALUES (19,'Heart Rate')")
+    conn.execute("INSERT INTO sources VALUES (1,'iPhone')")
+    conn.execute("INSERT INTO samples VALUES (1,7,?,?,8500.0,1)", (t1, t1 + 86400))
+    conn.execute("INSERT INTO samples VALUES (2,19,?,?,72.0,1)", (t1, t1 + 60))
+    conn.execute("INSERT INTO workouts VALUES (1,'HKWorkoutActivityTypeRunning',?,?,1800.0,5000.0,350.0)", (t1, t1 + 1800))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_kik_db() -> bytes:
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZKIKPERSON (
+            Z_PK INTEGER PRIMARY KEY,
+            BJID TEXT,
+            DISPLAY_NAME TEXT
+        );
+        CREATE TABLE ZKIKMESSAGE (
+            Z_PK INTEGER PRIMARY KEY,
+            BODY TEXT,
+            TIMESTAMP INTEGER,
+            SENDER_JID TEXT,
+            CONVO_ID TEXT,
+            WAS_ME INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO ZKIKPERSON VALUES (1,'alice_kik@kik.com','Alice')")
+    conn.execute("INSERT INTO ZKIKMESSAGE VALUES (1,'Hey Kik!',1655287200,'alice_kik@kik.com','kik_conv_1',0)")
+    conn.execute("INSERT INTO ZKIKMESSAGE VALUES (2,'Kik reply',1655290800,'me@kik.com','kik_conv_1',1)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_sms_db_with_gaps() -> bytes:
+    """sms.db with ROWID gaps (simulates deleted messages)."""
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, service TEXT, uncanonicalized_id TEXT);
+        CREATE TABLE message (ROWID INTEGER PRIMARY KEY, guid TEXT, text TEXT, attributedBody BLOB,
+            handle_id INTEGER, is_from_me INTEGER, date INTEGER, service TEXT,
+            cache_has_attachments INTEGER DEFAULT 0);
+        CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, chat_identifier TEXT,
+            display_name TEXT, service_name TEXT);
+        CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER, PRIMARY KEY (chat_id, message_id));
+        CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, guid TEXT, filename TEXT, mime_type TEXT);
+        CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER,
+            PRIMARY KEY (message_id, attachment_id));
+    """)
+    conn.execute("INSERT INTO handle VALUES (1,'+15551234567','iMessage',NULL)")
+    t1 = 1655287200 - APPLE_EPOCH
+    t2 = 1655290800 - APPLE_EPOCH
+    t3 = 1655294400 - APPLE_EPOCH
+    # ROWIDs 1, 5, 10 — gaps of 3 and 4
+    conn.execute("INSERT INTO message(ROWID,text,is_from_me,date,service) VALUES (1,'First',0,?,  'iMessage')", (t1,))
+    conn.execute("INSERT INTO message(ROWID,text,is_from_me,date,service) VALUES (5,'Fifth',0,?,  'iMessage')", (t2,))
+    conn.execute("INSERT INTO message(ROWID,text,is_from_me,date,service) VALUES (10,'Tenth',1,?, 'iMessage')", (t3,))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_segb_file() -> bytes:
+    """Build a minimal 2-record SEGB file for Biome tests."""
+    import struct
+    ts = 680054400.0   # arbitrary Apple epoch timestamp
+    payload = b'\x08\x01'  # minimal protobuf (field 1, varint 1)
+    record = struct.pack(">d", ts) + struct.pack("<I", len(payload)) + payload
+    # Pad record to 8-byte alignment
+    record += b'\x00' * ((8 - len(record) % 8) % 8)
+    return record * 2 + b'SEGB'
+
+
+# ── Second-round root fixtures ────────────────────────────────────────────
+
+@pytest.fixture(scope="session")
+def knowledgec_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_knowledgec")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/CoreDuet/Knowledge/knowledgeC.db",
+                    _make_knowledgec_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def interactionc_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_interactionc")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/CoreDuet/People/interactionC.db",
+                    _make_interactionc_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def tcc_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_tcc")
+    _minimal_backup(root, "HomeDomain", "Library/TCC/TCC.db", _make_tcc_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def data_usage_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_data_usage")
+    _minimal_backup(root, "WirelessDomain",
+                    "Library/Databases/DataUsage.sqlite",
+                    _make_data_usage_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def accounts_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_accounts")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/Accounts/Accounts3.sqlite",
+                    _make_accounts_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def wallet_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_wallet")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/Passes/passes23.sqlite",
+                    _make_wallet_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def reminders_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_reminders")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/Reminders/Container_v1/Stores/Data-ABCDEF.sqlite",
+                    _make_reminders_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def bluetooth_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_bluetooth")
+    _minimal_backup(
+        root,
+        "SystemPreferencesDomain",
+        "Library/Preferences/com.apple.MobileBluetooth.devices.plist",
+        _make_bluetooth_plist(),
+    )
+    return root
+
+
+@pytest.fixture(scope="session")
+def deleted_apps_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_deleted_apps")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/MobileInstallation/UninstalledApplications.plist",
+                    _make_uninstalled_plist())
+    return root
+
+
+@pytest.fixture(scope="session")
+def sms_gaps_root(tmp_path_factory) -> Path:
+    """Backup where sms.db has ROWID gaps (simulates deleted messages)."""
+    root = tmp_path_factory.mktemp("backup_sms_gaps")
+    _minimal_backup(root, "HomeDomain", "Library/SMS/sms.db",
+                    _make_sms_db_with_gaps())
+    return root
+
+
+@pytest.fixture(scope="session")
+def biome_root(tmp_path_factory) -> Path:
+    """Backup with two synthetic SEGB Biome stream files."""
+    root = tmp_path_factory.mktemp("backup_biome")
+    file_map: Dict = {}
+    segb = _make_segb_file()
+    _place_file(root, "HomeDomain",
+                "Library/Biome/streams/restricted/_DKEvent.App.inFocus/local/abc123",
+                segb, file_map)
+    _place_file(root, "HomeDomain",
+                "Library/Biome/streams/public/NowPlaying/local/def456",
+                segb, file_map)
+    _build_manifest_db(root, file_map)
+    (root / "Manifest.plist").write_bytes(_make_manifest_plist(encrypted=False))
+    (root / "Info.plist").write_bytes(_make_info_plist())
+    return root
+
+
+@pytest.fixture(scope="session")
+def health_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_health")
+    _minimal_backup(root, "HomeDomain",
+                    "Library/Health/healthdb_secure.sqlite",
+                    _make_health_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def kik_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_kik")
+    _minimal_backup(root, "AppDomain-com.kik.chat",
+                    "kik.sqlite", _make_kik_db())
     return root

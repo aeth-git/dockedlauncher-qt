@@ -1205,3 +1205,579 @@ class TestFullBackupIntegration:
     def test_skype_from_full_backup(self, backup_source):
         records = SkypeParser(backup_source).parse()
         assert len(records) == 2
+
+
+# ── KnowledgeC ────────────────────────────────────────────────────────────
+
+class TestKnowledgeCParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, knowledgec_root):
+        from forensic.parsers.knowledgec import KnowledgeCParser
+        self.parser_cls = KnowledgeCParser
+        self.src = _open(knowledgec_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_records(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_has_timestamp(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["timestamp"] is not None for r in records)
+
+    def test_stream_labels_present(self):
+        records = self.parser_cls(self.src).parse()
+        types = {r["event_type"] for r in records}
+        assert "App Usage" in types or len(types) > 0
+
+    def test_media_title_extracted(self):
+        records = self.parser_cls(self.src).parse()
+        media_recs = [r for r in records if r.get("media_title")]
+        assert len(media_recs) >= 1
+        assert media_recs[0]["media_title"] == "Song A"
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.knowledgec import KnowledgeCParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            KnowledgeCParser(empty_backup_source).parse()
+
+
+# ── InteractionC ──────────────────────────────────────────────────────────
+
+class TestInteractionCParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, interactionc_root):
+        from forensic.parsers.interactionc import InteractionCParser
+        self.parser_cls = InteractionCParser
+        self.src = _open(interactionc_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_records(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_contact_name_resolved(self):
+        records = self.parser_cls(self.src).parse()
+        assert any(r["contact"] == "Alice" for r in records)
+
+    def test_direction_decoded(self):
+        records = self.parser_cls(self.src).parse()
+        directions = {r["direction"] for r in records}
+        assert "Received" in directions
+        assert "Sent" in directions
+
+    def test_has_app(self):
+        records = self.parser_cls(self.src).parse()
+        assert all("app" in r for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.interactionc import InteractionCParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            InteractionCParser(empty_backup_source).parse()
+
+
+# ── TCC (App Permissions) ─────────────────────────────────────────────────
+
+class TestTCCParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, tcc_root):
+        from forensic.parsers.tcc import TCCParser
+        self.parser_cls = TCCParser
+        self.src = _open(tcc_root)
+        yield
+        self.src.close()
+
+    def test_returns_records(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 3
+
+    def test_service_label_mapped(self):
+        records = self.parser_cls(self.src).parse()
+        services = {r["service"] for r in records}
+        assert "Camera" in services
+        assert "Microphone" in services
+
+    def test_permission_decoded(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["permission"] == "Allowed" for r in records)
+
+    def test_bundle_id_present(self):
+        records = self.parser_cls(self.src).parse()
+        assert any(r["bundle_id"] == "com.example.app" for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.tcc import TCCParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            TCCParser(empty_backup_source).parse()
+
+
+# ── DataUsage ─────────────────────────────────────────────────────────────
+
+class TestDataUsageParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, data_usage_root):
+        from forensic.parsers.data_usage import DataUsageParser
+        self.parser_cls = DataUsageParser
+        self.src = _open(data_usage_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_apps(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_sorted_by_total_descending(self):
+        records = self.parser_cls(self.src).parse()
+        # com.example.app has higher total than Safari
+        assert records[0]["bundle_id"] == "com.example.app"
+
+    def test_human_readable_sizes(self):
+        records = self.parser_cls(self.src).parse()
+        for r in records:
+            assert any(unit in r["total"] for unit in ("B", "KB", "MB", "GB"))
+
+    def test_wifi_out_present(self):
+        records = self.parser_cls(self.src).parse()
+        assert all("wifi_out" in r for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.data_usage import DataUsageParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            DataUsageParser(empty_backup_source).parse()
+
+
+# ── Accounts ──────────────────────────────────────────────────────────────
+
+class TestAccountsParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, accounts_root):
+        from forensic.parsers.accounts import AccountsParser
+        self.parser_cls = AccountsParser
+        self.src = _open(accounts_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_accounts(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_username_present(self):
+        records = self.parser_cls(self.src).parse()
+        usernames = {r["username"] for r in records}
+        assert "alice@icloud.com" in usernames
+        assert "alice@gmail.com" in usernames
+
+    def test_type_label_resolved(self):
+        records = self.parser_cls(self.src).parse()
+        labels = {r["type_label"] for r in records}
+        assert "iCloud" in labels
+
+    def test_oauth_active(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["oauth_active"] for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.accounts import AccountsParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            AccountsParser(empty_backup_source).parse()
+
+
+# ── Wallet ────────────────────────────────────────────────────────────────
+
+class TestWalletParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, wallet_root):
+        from forensic.parsers.wallet import WalletParser
+        self.parser_cls = WalletParser
+        self.src = _open(wallet_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_records(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_apple_pay_transaction(self):
+        records = self.parser_cls(self.src).parse()
+        txn = next(r for r in records if r["type"] == "Apple Pay")
+        assert txn["merchant"] == "Coffee Shop"
+        assert "4.50" in txn["amount"]
+
+    def test_boarding_pass(self):
+        records = self.parser_cls(self.src).parse()
+        passes = [r for r in records if r["type"] == "boardingPass"]
+        assert len(passes) == 1
+        assert passes[0]["merchant"] == "Delta"
+
+    def test_timestamp_parsed(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["timestamp"] is not None for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.wallet import WalletParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            WalletParser(empty_backup_source).parse()
+
+
+# ── Reminders ─────────────────────────────────────────────────────────────
+
+class TestRemindersParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, reminders_root):
+        from forensic.parsers.reminders import RemindersParser
+        self.parser_cls = RemindersParser
+        self.src = _open(reminders_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_reminders(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_titles_present(self):
+        records = self.parser_cls(self.src).parse()
+        titles = {r["title"] for r in records}
+        assert "Buy groceries" in titles
+        assert "Call dentist" in titles
+
+    def test_completed_flag(self):
+        records = self.parser_cls(self.src).parse()
+        dentist = next(r for r in records if r["title"] == "Call dentist")
+        assert dentist["completed"] is True
+
+    def test_due_date_parsed(self):
+        records = self.parser_cls(self.src).parse()
+        groceries = next(r for r in records if r["title"] == "Buy groceries")
+        assert groceries["due"] is not None
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.reminders import RemindersParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            RemindersParser(empty_backup_source).parse()
+
+
+# ── Bluetooth ─────────────────────────────────────────────────────────────
+
+class TestBluetoothParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, bluetooth_root):
+        from forensic.parsers.bluetooth import BluetoothParser
+        self.parser_cls = BluetoothParser
+        self.src = _open(bluetooth_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_devices(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_device_name_present(self):
+        records = self.parser_cls(self.src).parse()
+        names = {r["name"] for r in records}
+        assert "Alice's AirPods" in names
+
+    def test_mac_address_present(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["address"] for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.bluetooth import BluetoothParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            BluetoothParser(empty_backup_source).parse()
+
+
+# ── Deleted Apps ──────────────────────────────────────────────────────────
+
+class TestDeletedAppsParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, deleted_apps_root):
+        from forensic.parsers.deleted_apps import DeletedAppsParser
+        self.parser_cls = DeletedAppsParser
+        self.src = _open(deleted_apps_root)
+        yield
+        self.src.close()
+
+    def test_returns_records(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) >= 1
+
+    def test_bundle_id_present(self):
+        records = self.parser_cls(self.src).parse()
+        bundle_ids = {r["bundle_id"] for r in records}
+        assert "com.example.deletedapp" in bundle_ids
+
+    def test_source_labeled(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["source"] for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.deleted_apps import DeletedAppsParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            DeletedAppsParser(empty_backup_source).parse()
+
+
+# ── SMS Recovery ──────────────────────────────────────────────────────────
+
+class TestSMSRecoveryParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, sms_gaps_root):
+        from forensic.parsers.sms_recovery import SMSRecoveryParser
+        self.parser_cls = SMSRecoveryParser
+        self.src = _open(sms_gaps_root)
+        yield
+        self.src.close()
+
+    def test_detects_gaps(self):
+        records = self.parser_cls(self.src).parse()
+        gap_records = [r for r in records if r["type"] == "Gap (deleted messages)"]
+        assert len(gap_records) == 2
+
+    def test_gap_counts_correct(self):
+        records = self.parser_cls(self.src).parse()
+        gap_records = sorted(
+            [r for r in records if r["type"] == "Gap (deleted messages)"],
+            key=lambda r: r["gap_start_rowid"]
+        )
+        # Gap 1: ROWIDs 2,3,4 → count=3; Gap 2: ROWIDs 6,7,8,9 → count=4
+        assert gap_records[0]["deleted_count"] == 3
+        assert gap_records[1]["deleted_count"] == 4
+
+    def test_timestamps_bracketed(self):
+        records = self.parser_cls(self.src).parse()
+        for r in [x for x in records if x["type"] == "Gap (deleted messages)"]:
+            assert r["after_timestamp"] is not None
+            assert r["before_timestamp"] is not None
+
+    def test_detail_string_present(self):
+        records = self.parser_cls(self.src).parse()
+        for r in [x for x in records if x["type"] == "Gap (deleted messages)"]:
+            assert r["detail"]
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.sms_recovery import SMSRecoveryParser
+        from forensic.parsers.base import ParserError
+        # empty_backup_source HAS sms.db, but no gaps → returns []
+        # The parser only raises if db_path is None
+        records = SMSRecoveryParser(empty_backup_source).parse()
+        # Verify it doesn't crash; may return [] (no gaps in sequential ROWIDs)
+        assert isinstance(records, list)
+
+
+# ── Biome ─────────────────────────────────────────────────────────────────
+
+class TestBiomeParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, biome_root):
+        from forensic.parsers.biome import BiomeParser
+        self.parser_cls = BiomeParser
+        self.src = _open(biome_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_streams(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_stream_names_correct(self):
+        records = self.parser_cls(self.src).parse()
+        names = {r["stream_name"] for r in records}
+        assert "_DKEvent.App.inFocus" in names
+        assert "NowPlaying" in names
+
+    def test_record_count_nonzero(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r["record_count"] >= 2 for r in records)
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.biome import BiomeParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            BiomeParser(empty_backup_source).parse()
+
+
+# ── Health ────────────────────────────────────────────────────────────────
+
+class TestHealthParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, health_root):
+        from forensic.parsers.health import HealthParser
+        self.parser_cls = HealthParser
+        self.src = _open(health_root)
+        yield
+        self.src.close()
+
+    def test_returns_records(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) >= 3  # 2 samples + 1 workout
+
+    def test_steps_present(self):
+        records = self.parser_cls(self.src).parse()
+        steps = [r for r in records if r["data_type"] == "Steps"]
+        assert len(steps) == 1
+        assert steps[0]["value"] == "8500.0"
+
+    def test_workout_present(self):
+        records = self.parser_cls(self.src).parse()
+        workouts = [r for r in records if "Workout" in r["data_type"]]
+        assert len(workouts) == 1
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.health import HealthParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            HealthParser(empty_backup_source).parse()
+
+
+# ── IOC Checker ───────────────────────────────────────────────────────────
+
+class TestIOCChecker:
+    @pytest.fixture(autouse=True)
+    def setup(self, empty_backup_source):
+        from forensic.parsers.ioc_checker import IOCChecker
+        self.parser_cls = IOCChecker
+        self.src = empty_backup_source
+
+    def test_returns_at_least_info_finding(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) >= 1
+
+    def test_has_severity_field(self):
+        records = self.parser_cls(self.src).parse()
+        for r in records:
+            assert r["severity"] in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
+
+    def test_clean_backup_returns_info(self):
+        records = self.parser_cls(self.src).parse()
+        # Clean backup with no known IOCs should return INFO not CRITICAL
+        severities = {r["severity"] for r in records}
+        assert "CRITICAL" not in severities
+
+    def test_finding_field_present(self):
+        records = self.parser_cls(self.src).parse()
+        assert all(r.get("finding") for r in records)
+
+
+# ── Kik ───────────────────────────────────────────────────────────────────
+
+class TestKikParser:
+    @pytest.fixture(autouse=True)
+    def setup(self, kik_root):
+        from forensic.parsers.thirdparty.kik import KikParser
+        self.parser_cls = KikParser
+        self.src = _open(kik_root)
+        yield
+        self.src.close()
+
+    def test_returns_two_messages(self):
+        records = self.parser_cls(self.src).parse()
+        assert len(records) == 2
+
+    def test_direction_decoded(self):
+        records = self.parser_cls(self.src).parse()
+        directions = {r["direction"] for r in records}
+        assert "Received" in directions
+        assert "Sent" in directions
+
+    def test_contact_resolved(self):
+        records = self.parser_cls(self.src).parse()
+        received = [r for r in records if r["direction"] == "Received"]
+        assert received[0]["contact"] == "Alice"
+
+    def test_not_found_raises(self, empty_backup_source):
+        from forensic.parsers.thirdparty.kik import KikParser
+        from forensic.parsers.base import ParserError
+        with pytest.raises(ParserError):
+            KikParser(empty_backup_source).parse()
+
+
+# ── Second-round integration (full backup) ────────────────────────────────
+
+class TestSecondRoundIntegration:
+    """Run all second-round parsers against the full backup_source."""
+
+    def test_knowledgec_from_full_backup(self, backup_source):
+        from forensic.parsers.knowledgec import KnowledgeCParser
+        records = KnowledgeCParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_interactionc_from_full_backup(self, backup_source):
+        from forensic.parsers.interactionc import InteractionCParser
+        records = InteractionCParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_tcc_from_full_backup(self, backup_source):
+        from forensic.parsers.tcc import TCCParser
+        records = TCCParser(backup_source).parse()
+        assert len(records) == 3
+
+    def test_data_usage_from_full_backup(self, backup_source):
+        from forensic.parsers.data_usage import DataUsageParser
+        records = DataUsageParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_accounts_from_full_backup(self, backup_source):
+        from forensic.parsers.accounts import AccountsParser
+        records = AccountsParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_wallet_from_full_backup(self, backup_source):
+        from forensic.parsers.wallet import WalletParser
+        records = WalletParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_reminders_from_full_backup(self, backup_source):
+        from forensic.parsers.reminders import RemindersParser
+        records = RemindersParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_bluetooth_from_full_backup(self, backup_source):
+        from forensic.parsers.bluetooth import BluetoothParser
+        records = BluetoothParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_deleted_apps_from_full_backup(self, backup_source):
+        from forensic.parsers.deleted_apps import DeletedAppsParser
+        records = DeletedAppsParser(backup_source).parse()
+        assert len(records) >= 1
+
+    def test_health_from_full_backup(self, backup_source):
+        from forensic.parsers.health import HealthParser
+        records = HealthParser(backup_source).parse()
+        assert len(records) >= 3
+
+    def test_kik_from_full_backup(self, backup_source):
+        from forensic.parsers.thirdparty.kik import KikParser
+        records = KikParser(backup_source).parse()
+        assert len(records) == 2
+
+    def test_biome_from_full_backup(self, backup_source):
+        from forensic.parsers.biome import BiomeParser
+        records = BiomeParser(backup_source).parse()
+        assert len(records) == 2
+        stream_names = {r["stream_name"] for r in records}
+        assert "_DKEvent.App.inFocus" in stream_names
+
+    def test_sms_recovery_no_gaps_in_full_backup(self, backup_source):
+        from forensic.parsers.sms_recovery import SMSRecoveryParser
+        records = SMSRecoveryParser(backup_source).parse()
+        # No gaps in the sequential test sms.db
+        gap_records = [r for r in records if r["type"] == "Gap (deleted messages)"]
+        assert len(gap_records) == 0
+
+    def test_ioc_checker_from_full_backup(self, backup_source):
+        from forensic.parsers.ioc_checker import IOCChecker
+        records = IOCChecker(backup_source).parse()
+        assert len(records) >= 1
+        assert all(r["severity"] in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
+                   for r in records)

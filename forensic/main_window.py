@@ -38,6 +38,19 @@ from .views.mail_view import MailView
 from .views.screentime_view import ScreenTimeView
 from .views.timeline_view import TimelineView
 from .views.report_view import ReportView
+from .views.knowledgec_view import KnowledgeCView
+from .views.interactionc_view import InteractionCView
+from .views.tcc_view import TCCView
+from .views.data_usage_view import DataUsageView
+from .views.accounts_view import AccountsView
+from .views.wallet_view import WalletView
+from .views.reminders_view import RemindersView
+from .views.bluetooth_view import BluetoothView
+from .views.deleted_apps_view import DeletedAppsView
+from .views.sms_recovery_view import SMSRecoveryView
+from .views.biome_view import BiomeView
+from .views.health_view import HealthView
+from .views.ioc_view import IOCView
 
 _log = get_logger("main_window")
 
@@ -382,24 +395,50 @@ class ForensicWindow(QMainWindow):
         self._wifi_view       = WiFiView(case_log=self._case_log)
         self._mail_view       = MailView(case_log=self._case_log)
         self._screentime_view = ScreenTimeView(case_log=self._case_log)
-        self._timeline_view   = TimelineView(case_log=self._case_log)
-        self._report_view     = ReportView()
+        self._timeline_view      = TimelineView(case_log=self._case_log)
+        self._knowledgec_view    = KnowledgeCView(case_log=self._case_log)
+        self._interactionc_view  = InteractionCView(case_log=self._case_log)
+        self._tcc_view           = TCCView(case_log=self._case_log)
+        self._data_usage_view    = DataUsageView(case_log=self._case_log)
+        self._accounts_view      = AccountsView(case_log=self._case_log)
+        self._wallet_view        = WalletView(case_log=self._case_log)
+        self._reminders_view     = RemindersView(case_log=self._case_log)
+        self._bluetooth_view     = BluetoothView(case_log=self._case_log)
+        self._deleted_apps_view  = DeletedAppsView(case_log=self._case_log)
+        self._sms_recovery_view  = SMSRecoveryView(case_log=self._case_log)
+        self._biome_view         = BiomeView(case_log=self._case_log)
+        self._health_view        = HealthView(case_log=self._case_log)
+        self._ioc_view           = IOCView(case_log=self._case_log)
+        self._report_view        = ReportView()
 
-        tabs.addTab(self._timeline_view,   "Timeline")
-        tabs.addTab(self._msg_view,        "Messages")
-        tabs.addTab(self._calls_view,      "Calls")
-        tabs.addTab(self._voicemail_view,  "Voicemail")
-        tabs.addTab(self._contacts_view,   "Contacts")
-        tabs.addTab(self._photos_view,     "Photos")
-        tabs.addTab(self._safari_view,     "Safari")
-        tabs.addTab(self._mail_view,       "Mail")
-        tabs.addTab(self._notes_view,      "Notes")
-        tabs.addTab(self._calendar_view,   "Calendar")
-        tabs.addTab(self._location_view,   "Location")
-        tabs.addTab(self._wifi_view,       "WiFi")
-        tabs.addTab(self._screentime_view, "Screen Time")
-        tabs.addTab(self._apps_view,       "Apps")
-        tabs.addTab(self._report_view,     "Report")
+        tabs.addTab(self._ioc_view,          "Security")
+        tabs.addTab(self._timeline_view,     "Timeline")
+        tabs.addTab(self._msg_view,          "Messages")
+        tabs.addTab(self._calls_view,        "Calls")
+        tabs.addTab(self._voicemail_view,    "Voicemail")
+        tabs.addTab(self._contacts_view,     "Contacts")
+        tabs.addTab(self._photos_view,       "Photos")
+        tabs.addTab(self._safari_view,       "Safari")
+        tabs.addTab(self._mail_view,         "Mail")
+        tabs.addTab(self._notes_view,        "Notes")
+        tabs.addTab(self._calendar_view,     "Calendar")
+        tabs.addTab(self._reminders_view,    "Reminders")
+        tabs.addTab(self._location_view,     "Location")
+        tabs.addTab(self._wifi_view,         "WiFi")
+        tabs.addTab(self._screentime_view,   "Screen Time")
+        tabs.addTab(self._knowledgec_view,   "KnowledgeC")
+        tabs.addTab(self._interactionc_view, "Interactions")
+        tabs.addTab(self._biome_view,        "Biome")
+        tabs.addTab(self._health_view,       "Health")
+        tabs.addTab(self._tcc_view,          "Permissions")
+        tabs.addTab(self._data_usage_view,   "Data Usage")
+        tabs.addTab(self._accounts_view,     "Accounts")
+        tabs.addTab(self._wallet_view,       "Wallet")
+        tabs.addTab(self._bluetooth_view,    "Bluetooth")
+        tabs.addTab(self._deleted_apps_view, "Deleted Apps")
+        tabs.addTab(self._sms_recovery_view, "SMS Recovery")
+        tabs.addTab(self._apps_view,         "Apps")
+        tabs.addTab(self._report_view,       "Report")
 
         return tabs
 
@@ -532,7 +571,7 @@ class ForensicWindow(QMainWindow):
         self._session_token += 1
         token = self._session_token
 
-        self._total_count = 22
+        self._total_count = 36
         self._loaded_count = 0
         self._status.showMessage(f"Loading data… 0 / {self._total_count}")
 
@@ -659,6 +698,107 @@ class ForensicWindow(QMainWindow):
                 self._msg_view.load_app_records(k, None, t, d)
 
             self._launch(token, parser_cls, _done, _err)
+
+        # ── Kik (third-party messaging sub-tab) ─────────────────────────────
+        from .parsers.thirdparty.kik import KikParser
+
+        def _kik_done(recs):
+            self._msg_view.load_app_records("kik", recs)
+            _tl("kik", recs)
+            _report("Kik", recs)
+
+        self._launch(token, KikParser, _kik_done,
+                     lambda t, d: self._msg_view.load_app_records("kik", None, t, d))
+
+        # ── Pattern-of-life & device state ──────────────────────────────────
+        from .parsers.knowledgec   import KnowledgeCParser
+        from .parsers.interactionc import InteractionCParser
+        from .parsers.biome        import BiomeParser
+
+        self._launch(token, KnowledgeCParser,
+                     lambda recs: (self._knowledgec_view.load_records(recs),
+                                   _tl("knowledgec", recs),
+                                   _report("KnowledgeC (Pattern of Life)", recs)),
+                     lambda t, d: self._knowledgec_view.show_error(t, d))
+
+        self._launch(token, InteractionCParser,
+                     lambda recs: (self._interactionc_view.load_records(recs),
+                                   _tl("interaction", recs),
+                                   _report("Interactions (InteractionC)", recs)),
+                     lambda t, d: self._interactionc_view.show_error(t, d))
+
+        self._launch(token, BiomeParser,
+                     lambda recs: (self._biome_view.load_records(recs),
+                                   _report("Biome Streams", recs)),
+                     lambda t, d: self._biome_view.show_error(t, d))
+
+        # ── Privacy & security ───────────────────────────────────────────────
+        from .parsers.tcc        import TCCParser
+        from .parsers.data_usage import DataUsageParser
+        from .parsers.ioc_checker import IOCChecker
+
+        self._launch(token, TCCParser,
+                     lambda recs: (self._tcc_view.load_records(recs),
+                                   _report("App Permissions (TCC)", recs)),
+                     lambda t, d: self._tcc_view.show_error(t, d))
+
+        self._launch(token, DataUsageParser,
+                     lambda recs: (self._data_usage_view.load_records(recs),
+                                   _report("Data Usage", recs)),
+                     lambda t, d: self._data_usage_view.show_error(t, d))
+
+        self._launch(token, IOCChecker,
+                     lambda recs: (self._ioc_view.load_records(recs),
+                                   _report("Security / IOC", recs)),
+                     lambda t, d: self._ioc_view.show_error(t, d))
+
+        # ── Accounts, wallet, health ─────────────────────────────────────────
+        from .parsers.accounts import AccountsParser
+        from .parsers.wallet   import WalletParser
+        from .parsers.health   import HealthParser
+        from .parsers.reminders import RemindersParser
+
+        self._launch(token, AccountsParser,
+                     lambda recs: (self._accounts_view.load_records(recs),
+                                   _report("Accounts", recs)),
+                     lambda t, d: self._accounts_view.show_error(t, d))
+
+        self._launch(token, WalletParser,
+                     lambda recs: (self._wallet_view.load_records(recs),
+                                   _tl("wallet", recs),
+                                   _report("Apple Wallet", recs)),
+                     lambda t, d: self._wallet_view.show_error(t, d))
+
+        self._launch(token, HealthParser,
+                     lambda recs: (self._health_view.load_records(recs),
+                                   _report("Health", recs)),
+                     lambda t, d: self._health_view.show_error(t, d))
+
+        self._launch(token, RemindersParser,
+                     lambda recs: (self._reminders_view.load_records(recs),
+                                   _tl("reminder", recs),
+                                   _report("Reminders", recs)),
+                     lambda t, d: self._reminders_view.show_error(t, d))
+
+        # ── Bluetooth, deleted apps, SMS recovery ────────────────────────────
+        from .parsers.bluetooth    import BluetoothParser
+        from .parsers.deleted_apps import DeletedAppsParser
+        from .parsers.sms_recovery import SMSRecoveryParser
+
+        self._launch(token, BluetoothParser,
+                     lambda recs: (self._bluetooth_view.load_records(recs),
+                                   _report("Bluetooth Devices", recs)),
+                     lambda t, d: self._bluetooth_view.show_error(t, d))
+
+        self._launch(token, DeletedAppsParser,
+                     lambda recs: (self._deleted_apps_view.load_records(recs),
+                                   _report("Deleted Apps", recs)),
+                     lambda t, d: self._deleted_apps_view.show_error(t, d))
+
+        self._launch(token, SMSRecoveryParser,
+                     lambda recs: (self._sms_recovery_view.load_records(recs),
+                                   _report("SMS Deletion Events", recs)),
+                     lambda t, d: self._sms_recovery_view.show_error(t, d))
 
     def _launch(self, token, parser_cls, on_done, on_error):
         src = self._source

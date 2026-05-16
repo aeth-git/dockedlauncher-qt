@@ -91,6 +91,18 @@ BUNDLE_WECHAT = "com.tencent.xin"
 BUNDLE_DISCORD = "com.hammerandchisel.discord"
 BUNDLE_SKYPE = "com.skype.skype"
 
+# --- Second-round parser DB paths ---
+KNOWLEDGE_C_DB = ("HomeDomain", "Library/CoreDuet/Knowledge/knowledgeC.db")
+INTERACTION_C_DB = ("HomeDomain", "Library/CoreDuet/People/interactionC.db")
+TCC_DB = ("HomeDomain", "Library/TCC/TCC.db")
+TCC_ROOT_DB = ("RootDomain", "Library/Logs/Accessibility/TCC.db")
+DATA_USAGE_DB = ("WirelessDomain", "Library/Databases/DataUsage.sqlite")
+ACCOUNTS_DB = ("HomeDomain", "Library/Accounts/Accounts3.sqlite")
+WALLET_DB = ("HomeDomain", "Library/Passes/passes23.sqlite")
+BLUETOOTH_PLIST = ("SystemPreferencesDomain",
+                   "Library/Preferences/com.apple.MobileBluetooth.devices.plist")
+BUNDLE_KIK = "com.kik.chat"
+
 # ABMultiValue property codes
 AB_PROP_PHONE = 3
 AB_PROP_EMAIL = 4
