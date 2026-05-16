@@ -8,8 +8,17 @@ from forensic.parsers.apps import InstalledAppsParser
 from forensic.parsers.thirdparty.whatsapp import WhatsAppParser
 from forensic.parsers.thirdparty.telegram import TelegramParser
 from forensic.parsers.thirdparty.snapchat import SnapchatParser
+from forensic.parsers.thirdparty.signal import SignalParser
+from forensic.parsers.thirdparty.messenger import MessengerParser
+from forensic.parsers.thirdparty.instagram import InstagramParser
 from forensic.parsers.base import ParserError
 from forensic.sources.backup import BackupSource
+
+
+def _open(root):
+    src = BackupSource(str(root))
+    src.open()
+    return src
 
 
 # ── SMS / iMessage ────────────────────────────────────────────────────────
@@ -400,3 +409,257 @@ class TestImageSource:
         src = ImageSource(str(bad))
         with pytest.raises(IOError, match="Unsupported"):
             src.open()
+
+
+# ── Signal ────────────────────────────────────────────────────────────────────
+
+class TestSignalParser:
+    def test_not_found_raises(self, backup_source):
+        """backup_source has no Signal app installed."""
+        with pytest.raises(FileNotFoundError):
+            SignalParser(backup_source).parse()
+
+    def test_encrypted_raises_parser_error(self, signal_encrypted_root):
+        src = _open(signal_encrypted_root)
+        try:
+            with pytest.raises(ParserError, match="encrypted"):
+                SignalParser(src).parse()
+        finally:
+            src.close()
+
+    def test_yap_era_returns_two_messages(self, signal_yap_root):
+        src = _open(signal_yap_root)
+        try:
+            records = SignalParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_yap_era_service_is_signal(self, signal_yap_root):
+        src = _open(signal_yap_root)
+        try:
+            records = SignalParser(src).parse()
+            assert all(r["service"] == "Signal" for r in records)
+        finally:
+            src.close()
+
+    def test_yap_era_timestamps_are_2022(self, signal_yap_root):
+        src = _open(signal_yap_root)
+        try:
+            records = SignalParser(src).parse()
+            for r in records:
+                assert r["timestamp"] is not None
+                assert "2022-06-15" in r["timestamp"]
+        finally:
+            src.close()
+
+    def test_yap_era_contact_resolved(self, signal_yap_root):
+        """Thread map resolves contact phone from threads table."""
+        src = _open(signal_yap_root)
+        try:
+            records = SignalParser(src).parse()
+            contacts = [r["contact"] for r in records if r["contact"]]
+            assert len(contacts) == 2
+            assert all("+1555" in c for c in contacts)
+        finally:
+            src.close()
+
+    def test_yap_era_direction_resolved(self, signal_yap_root):
+        """recordType 101→Received, 102→Sent."""
+        src = _open(signal_yap_root)
+        try:
+            records = SignalParser(src).parse()
+            directions = {r["direction"] for r in records}
+            assert directions == {"Received", "Sent"}
+        finally:
+            src.close()
+
+    def test_yap_era_required_fields(self, signal_yap_root):
+        src = _open(signal_yap_root)
+        try:
+            records = SignalParser(src).parse()
+            required = {"timestamp", "contact", "chat", "direction", "service", "body", "attachments"}
+            for r in records:
+                assert required.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_grdb_era_returns_two_messages(self, signal_grdb_root):
+        src = _open(signal_grdb_root)
+        try:
+            records = SignalParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_grdb_era_directions(self, signal_grdb_root):
+        src = _open(signal_grdb_root)
+        try:
+            records = SignalParser(src).parse()
+            directions = {r["direction"] for r in records}
+            assert "Received" in directions
+            assert "Sent" in directions
+        finally:
+            src.close()
+
+    def test_grdb_era_contact_on_received(self, signal_grdb_root):
+        """Incoming GRDB messages populate contact from authorPhoneNumber."""
+        src = _open(signal_grdb_root)
+        try:
+            records = SignalParser(src).parse()
+            received = [r for r in records if r["direction"] == "Received"]
+            assert len(received) == 1
+            assert "+1555" in received[0]["contact"]
+        finally:
+            src.close()
+
+    def test_grdb_era_service_is_signal(self, signal_grdb_root):
+        src = _open(signal_grdb_root)
+        try:
+            records = SignalParser(src).parse()
+            assert all(r["service"] == "Signal" for r in records)
+        finally:
+            src.close()
+
+
+# ── Messenger ─────────────────────────────────────────────────────────────────
+
+class TestMessengerParser:
+    def test_not_found_raises(self, backup_source):
+        with pytest.raises(FileNotFoundError):
+            MessengerParser(backup_source).parse()
+
+    def test_readable_returns_two_messages(self, messenger_readable_root):
+        src = _open(messenger_readable_root)
+        try:
+            records = MessengerParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_readable_service_is_messenger(self, messenger_readable_root):
+        src = _open(messenger_readable_root)
+        try:
+            records = MessengerParser(src).parse()
+            assert all(r["service"] == "Messenger" for r in records)
+        finally:
+            src.close()
+
+    def test_readable_timestamps_are_2022(self, messenger_readable_root):
+        src = _open(messenger_readable_root)
+        try:
+            records = MessengerParser(src).parse()
+            for r in records:
+                assert r["timestamp"] is not None
+                assert "2022-06-15" in r["timestamp"]
+        finally:
+            src.close()
+
+    def test_readable_contact_populated(self, messenger_readable_root):
+        src = _open(messenger_readable_root)
+        try:
+            records = MessengerParser(src).parse()
+            contacts = [r["contact"] for r in records if r["contact"]]
+            assert len(contacts) > 0
+        finally:
+            src.close()
+
+    def test_readable_required_fields(self, messenger_readable_root):
+        src = _open(messenger_readable_root)
+        try:
+            records = MessengerParser(src).parse()
+            required = {"timestamp", "contact", "chat", "direction", "service", "body", "attachments"}
+            for r in records:
+                assert required.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_lightspeed_raises_parser_error(self, messenger_encrypted_root):
+        src = _open(messenger_encrypted_root)
+        try:
+            with pytest.raises(ParserError, match="Lightspeed"):
+                MessengerParser(src).parse()
+        finally:
+            src.close()
+
+    def test_lightspeed_error_mentions_raw_browser(self, messenger_encrypted_root):
+        src = _open(messenger_encrypted_root)
+        try:
+            with pytest.raises(ParserError) as exc_info:
+                MessengerParser(src).parse()
+            assert "raw DB browser" in str(exc_info.value)
+        finally:
+            src.close()
+
+
+# ── Instagram ─────────────────────────────────────────────────────────────────
+
+class TestInstagramParser:
+    def test_not_found_raises(self, backup_source):
+        with pytest.raises(FileNotFoundError):
+            InstagramParser(backup_source).parse()
+
+    def test_readable_returns_two_messages(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            assert len(records) == 2
+        finally:
+            src.close()
+
+    def test_service_is_instagram(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            assert all(r["service"] == "Instagram" for r in records)
+        finally:
+            src.close()
+
+    def test_timestamps_are_2022(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            for r in records:
+                assert r["timestamp"] is not None
+                assert "2022-06-15" in r["timestamp"]
+        finally:
+            src.close()
+
+    def test_contact_populated(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            contacts = [r["contact"] for r in records if r["contact"]]
+            assert len(contacts) == 2
+        finally:
+            src.close()
+
+    def test_chat_populated(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            chats = [r["chat"] for r in records if r["chat"]]
+            assert len(chats) == 2
+            assert all("thread_abc" in c for c in chats)
+        finally:
+            src.close()
+
+    def test_required_fields(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            required = {"timestamp", "contact", "chat", "direction", "service", "body", "attachments"}
+            for r in records:
+                assert required.issubset(r.keys())
+        finally:
+            src.close()
+
+    def test_body_populated(self, instagram_root):
+        src = _open(instagram_root)
+        try:
+            records = InstagramParser(src).parse()
+            bodies = [r["body"] for r in records if r["body"]]
+            assert len(bodies) == 2
+            assert any("Instagram" in b for b in bodies)
+        finally:
+            src.close()

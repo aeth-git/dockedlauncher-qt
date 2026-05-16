@@ -356,6 +356,188 @@ def backup_source(backup_root):
     src.close()
 
 
+# ── Third-party DB builders ───────────────────────────────────────────────
+
+
+def _make_signal_yap_db() -> bytes:
+    """Signal YapDatabase era — 'threads' + 'interactions' tables."""
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE threads (
+            uniqueId TEXT PRIMARY KEY,
+            contactPhoneNumber TEXT
+        );
+        CREATE TABLE interactions (
+            uniqueId TEXT PRIMARY KEY,
+            threadUniqueId TEXT,
+            body TEXT,
+            timestamp INTEGER,
+            recordType INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO threads VALUES ('thread1','+15551234567')")
+    # recordType 101 = incoming (Received), 102 = outgoing (Sent)
+    conn.execute("INSERT INTO interactions VALUES ('m1','thread1','Hello Signal',1655287200000,101)")
+    conn.execute("INSERT INTO interactions VALUES ('m2','thread1','Signal reply',1655290800000,102)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_signal_grdb_db() -> bytes:
+    """Signal GRDB era (unencrypted) — model_IncomingMessage / model_OutgoingMessage."""
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE model_IncomingMessage (
+            uniqueId TEXT PRIMARY KEY,
+            body TEXT,
+            timestamp INTEGER,
+            authorPhoneNumber TEXT
+        );
+        CREATE TABLE model_OutgoingMessage (
+            uniqueId TEXT PRIMARY KEY,
+            body TEXT,
+            timestamp INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO model_IncomingMessage VALUES ('m1','Hey GRDB',1655287200000,'+15551234567')")
+    conn.execute("INSERT INTO model_OutgoingMessage VALUES ('m2','GRDB reply',1655290800000)")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_signal_encrypted_db() -> bytes:
+    """Simulate SQLCipher-encrypted database (not valid SQLite)."""
+    # SQLCipher XORs the header so it won't start with the SQLite magic string.
+    return b"\xd9\x4e\x2a\x11" * 256 + b"\xff\xfe\xfd" * 256
+
+
+def _make_messenger_readable_db() -> bytes:
+    """Messenger pre-Lightspeed — readable 'messages' table."""
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            body TEXT,
+            timestamp_ms INTEGER,
+            sender_id TEXT
+        );
+    """)
+    conn.execute("INSERT INTO messages VALUES (1,'Hey Messenger!',1655287200000,'alice')")
+    conn.execute("INSERT INTO messages VALUES (2,'Reply back',1655290800000,'me')")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_messenger_encrypted_db() -> bytes:
+    """Messenger post-Lightspeed — body column contains binary blobs."""
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            body BLOB,
+            timestamp_ms INTEGER
+        );
+    """)
+    conn.execute("INSERT INTO messages VALUES (1,?,1655287200000)", (b'\xde\xad\xbe\xef' * 16,))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _make_instagram_db() -> bytes:
+    """Instagram direct_messages table."""
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE direct_messages (
+            id INTEGER PRIMARY KEY,
+            text TEXT,
+            timestamp INTEGER,
+            sender_id TEXT,
+            thread_id TEXT
+        );
+    """)
+    conn.execute("INSERT INTO direct_messages VALUES (1,'Hey Instagram!',1655287200,'alice','thread_abc')")
+    conn.execute("INSERT INTO direct_messages VALUES (2,'IG reply',1655290800,'me','thread_abc')")
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+def _minimal_backup(root: Path, domain: str, rel_path: str, db_bytes: bytes) -> None:
+    """Place one file, build Manifest.db, write plists."""
+    file_map: Dict = {}
+    _place_file(root, domain, rel_path, db_bytes, file_map)
+    _build_manifest_db(root, file_map)
+    (root / "Manifest.plist").write_bytes(_make_manifest_plist(encrypted=False))
+    (root / "Info.plist").write_bytes(_make_info_plist())
+
+
+@pytest.fixture(scope="session")
+def signal_yap_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_signal_yap")
+    _minimal_backup(root, "AppDomain-org.whispersystems.signal",
+                    "Documents/signal.sqlite", _make_signal_yap_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def signal_grdb_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_signal_grdb")
+    _minimal_backup(root, "AppDomain-org.whispersystems.signal",
+                    "Documents/signal.sqlite", _make_signal_grdb_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def signal_encrypted_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_signal_enc")
+    _minimal_backup(root, "AppDomain-org.whispersystems.signal",
+                    "Documents/signal.sqlite", _make_signal_encrypted_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def messenger_readable_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_msg_readable")
+    _minimal_backup(root, "AppDomain-com.facebook.Messenger",
+                    "Documents/messenger.db", _make_messenger_readable_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def messenger_encrypted_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_msg_enc")
+    _minimal_backup(root, "AppDomain-com.facebook.Messenger",
+                    "Documents/messenger.db", _make_messenger_encrypted_db())
+    return root
+
+
+@pytest.fixture(scope="session")
+def instagram_root(tmp_path_factory) -> Path:
+    root = tmp_path_factory.mktemp("backup_instagram")
+    _minimal_backup(root, "AppDomain-com.burbn.instagram",
+                    "Documents/direct.db", _make_instagram_db())
+    return root
+
+
 @pytest.fixture(scope="session")
 def whatsapp_no_contact_root(tmp_path_factory) -> Path:
     """Backup with WhatsApp post-2022 (no ZWACONTACT table)."""

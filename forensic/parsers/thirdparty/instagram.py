@@ -39,20 +39,24 @@ class InstagramParser(BaseParser):
             col_names = {row[1] for row in cols_cur.fetchall()}
             body_col = next((c for c in ("text", "body", "message", "content") if c in col_names), None)
             ts_col = next((c for c in ("timestamp", "created_at", "date") if c in col_names), None)
+            sender_col = next((c for c in ("sender_id", "user_id", "author_id") if c in col_names), None)
+            thread_col = next((c for c in ("thread_id", "conversation_id") if c in col_names), None)
 
             if not body_col:
                 raise ParserError("SCHEMA_UNKNOWN")
 
             parts = [f"COALESCE({body_col}, '') AS body"]
             parts.append(f"{ts_col} AS raw_ts" if ts_col else "NULL AS raw_ts")
+            parts.append(f"{sender_col} AS sender" if sender_col else "NULL AS sender")
+            parts.append(f"{thread_col} AS thread" if thread_col else "NULL AS thread")
             order = f"ORDER BY {ts_col} DESC" if ts_col else ""
             rows = conn.execute(f"SELECT {', '.join(parts)} FROM {msg_table} {order}").fetchall()
             _log.info("Fetched %d Instagram messages", len(rows))
             return [
                 {
                     "timestamp": unix_ts(r[1]),
-                    "contact": "",
-                    "chat": "",
+                    "contact": str(r[2]) if r[2] else "",
+                    "chat": str(r[3]) if r[3] else "",
                     "direction": "",
                     "service": "Instagram",
                     "body": r[0],

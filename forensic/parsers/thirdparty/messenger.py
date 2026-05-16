@@ -62,8 +62,9 @@ class MessengerParser(BaseParser):
         )
         if not msg_table:
             raise ParserError(
-                "LIGHTSPEED_ENCRYPTED",
-                # Signal to the view layer that a raw browser should be shown
+                "Facebook Messenger uses end-to-end Lightspeed encryption (post-2020). "
+                "Message content cannot be recovered from the backup database. "
+                "Table names and row counts are visible in the raw DB browser."
             )
 
         cols_cur = conn.execute(f"PRAGMA table_info({msg_table})")
@@ -73,13 +74,21 @@ class MessengerParser(BaseParser):
         sender_col = next((c for c in ("sender_id", "from_id", "author_id") if c in col_names), None)
 
         if not body_col:
-            raise ParserError("LIGHTSPEED_ENCRYPTED")
+            raise ParserError(
+                "Facebook Messenger uses end-to-end Lightspeed encryption (post-2020). "
+                "Message content cannot be recovered from the backup database. "
+                "Table names and row counts are visible in the raw DB browser."
+            )
 
         # Sample a few rows to check for encrypted content
         sample = conn.execute(f"SELECT {body_col} FROM {msg_table} LIMIT 5").fetchall()
         for (val,) in sample:
             if isinstance(val, bytes):
-                raise ParserError("LIGHTSPEED_ENCRYPTED")
+                raise ParserError(
+                    "Facebook Messenger uses end-to-end Lightspeed encryption (post-2020). "
+                    "Message content cannot be recovered from the backup database. "
+                    "Table names and row counts are visible in the raw DB browser."
+                )
 
         parts = [f"COALESCE({body_col}, '') AS body"]
         parts.append(f"{ts_col} AS raw_ts" if ts_col else "NULL AS raw_ts")
