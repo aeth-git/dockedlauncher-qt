@@ -159,7 +159,7 @@ def export_html(path: str, **kwargs) -> None:
 def export_pdf(path: str, **kwargs) -> None:
     """Export PDF via weasyprint if available, otherwise open HTML in browser."""
     html = generate_html_report(**kwargs)
-    tmp_html = path.replace(".pdf", "_report_tmp.html")
+    tmp_html = str(Path(path).with_suffix("")) + "_report_tmp.html"
     Path(tmp_html).write_text(html, encoding="utf-8")
     try:
         from weasyprint import HTML

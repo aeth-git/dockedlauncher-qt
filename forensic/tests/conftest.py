@@ -581,6 +581,25 @@ def _minimal_backup(root: Path, domain: str, rel_path: str, db_bytes: bytes) -> 
     (root / "Info.plist").write_bytes(_make_info_plist())
 
 
+def make_backup(tmp_path: Path, *triples) -> "BackupSource":
+    """Build a minimal open BackupSource from (domain, rel_path, content) triples.
+
+    Each triple is (domain: str, rel_path: str, content: bytes | str).
+    """
+    from forensic.sources.backup import BackupSource
+
+    file_map: Dict = {}
+    for domain, rel, content in triples:
+        data = content if isinstance(content, bytes) else content.encode()
+        _place_file(tmp_path, domain, rel, data, file_map)
+    _build_manifest_db(tmp_path, file_map)
+    (tmp_path / "Manifest.plist").write_bytes(_make_manifest_plist(encrypted=False))
+    (tmp_path / "Info.plist").write_bytes(_make_info_plist())
+    src = BackupSource(str(tmp_path))
+    src.open()
+    return src
+
+
 @pytest.fixture(scope="session")
 def signal_yap_root(tmp_path_factory) -> Path:
     root = tmp_path_factory.mktemp("backup_signal_yap")

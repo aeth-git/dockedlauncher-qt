@@ -11,6 +11,9 @@ from PyQt5.QtWidgets import (
 )
 
 from .base_view import BaseTabView, _RecordModel, TABLE_QSS
+from ..logger import get_logger
+
+_log = get_logger("views.raw_db")
 from ..constants import (
     PAPER, HAIRLINE, INK, INK_MUTED, FONT_FAMILY, FONT_SIZE_DATA, FONT_SIZE_LABEL,
 )
@@ -118,7 +121,7 @@ class RawDbView(QWidget):
             self._rows_table.horizontalHeader().setStretchLastSection(True)
             self._rows_table.resizeColumnsToContents()
         except Exception as e:
-            pass
+            _log.debug("raw_db row load failed for table %r: %s", table, e)
 
     def closeEvent(self, event):
         if self._conn:

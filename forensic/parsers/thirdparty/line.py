@@ -29,6 +29,13 @@ _MESSAGES_SQL = """
     ORDER BY deliver_time DESC
 """
 
+# Queries tried in order to find the device owner's LINE MID.
+_SELF_MID_QUERIES = [
+    ("setting",     "SELECT setting_value FROM setting WHERE setting_key='MY_MID' LIMIT 1"),
+    ("my_profile",  "SELECT mid FROM my_profile LIMIT 1"),
+    ("profile",     "SELECT mid FROM profile LIMIT 1"),
+]
+
 
 class LINEParser(BaseParser):
     def parse(self) -> List[dict]:
@@ -42,6 +49,18 @@ class LINEParser(BaseParser):
             if "chat_history" not in tables:
                 raise ParserError("LINE: chat_history table not found (schema changed)")
 
+            # Determine self-user MID to distinguish sent from received
+            self_mid = "u0"
+            for table, sql in _SELF_MID_QUERIES:
+                if table in tables:
+                    try:
+                        row = conn.execute(sql).fetchone()
+                        if row and row[0]:
+                            self_mid = str(row[0])
+                            break
+                    except Exception:
+                        pass
+
             # Build contact map
             contact_map: dict = {}
             if "contact" in tables:
@@ -49,14 +68,14 @@ class LINEParser(BaseParser):
                     contact_map[r["mid"]] = r["name"] or r["mid"]
 
             rows = conn.execute(_MESSAGES_SQL).fetchall()
-            _log.info("LINE: %d messages", len(rows))
+            _log.info("LINE: %d messages (self_mid=%s)", len(rows), self_mid)
             return [{
                 "id": r["id"],
                 "timestamp": unix_ts(r["raw_ts"]),
                 "body": r["body"] or "",
                 "contact": contact_map.get(r["sender_mid"], r["sender_mid"] or ""),
                 "chat": str(r["chat_id"] or ""),
-                "direction": "Sent" if r["sender_mid"] == "u0" else "Received",
+                "direction": "Sent" if r["sender_mid"] == self_mid else "Received",
                 "app": "LINE",
             } for r in rows]
         finally:

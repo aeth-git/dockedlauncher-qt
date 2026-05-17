@@ -361,9 +361,17 @@ class PhotosView(QWidget):
         if not path:
             return
         keys = ["filename", "size", "local_path", "rel_path"]
+
+        def _csv_safe(val) -> str:
+            s = str(val) if val is not None else ""
+            return ("'" + s) if s and s[0] in ('=', '+', '-', '@', '\t', '\r') else s
+
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             writer = _csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(self._filtered)
+            writer.writerows(
+                {k: _csv_safe(r.get(k, "")) for k in keys}
+                for r in self._filtered
+            )
         if self._case_log:
             self._case_log.log_export(path, len(self._filtered))

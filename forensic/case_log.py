@@ -37,8 +37,9 @@ class CaseLog:
 
     @staticmethod
     def _sanitize(value: str) -> str:
-        """Strip newline characters to prevent log injection."""
-        return str(value).replace('\n', ' ').replace('\r', ' ')
+        """Strip newline and other ASCII control characters to prevent log injection."""
+        import re
+        return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(value).replace('\n', ' ').replace('\r', ' '))
 
     def log_source_opened(self, path: str, sha256: str = None):
         if sha256 is None and os.path.isfile(path):
@@ -58,7 +59,10 @@ class CaseLog:
         self._log.info(f"EXPORT | destination={destination_safe} | records={record_count} | sha256={sha256}")
 
     def log_hash_mismatch(self, path: str, before: str, after: str):
-        self._log.warning(f"HASH MISMATCH | path={path} | before={before} | after={after}")
+        path_safe   = self._sanitize(path)
+        before_safe = self._sanitize(before)
+        after_safe  = self._sanitize(after)
+        self._log.warning(f"HASH MISMATCH | path={path_safe} | before={before_safe} | after={after_safe}")
 
     def log_error(self, context: str, error: str):
         self._log.error(f"ERROR | context={context} | error={error}")

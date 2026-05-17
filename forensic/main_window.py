@@ -610,9 +610,9 @@ class ForensicWindow(QMainWindow):
         self._session_token += 1
         token = self._session_token
 
-        self._total_count = 49
+        self._total_count = 0
         self._loaded_count = 0
-        self._status.showMessage(f"Loading data… 0 / {self._total_count}")
+        self._status.showMessage("Loading data…")
 
         # ── Apple system parsers ─────────────────────────────────────────────
         from .parsers.messages  import SMSParser
@@ -929,6 +929,7 @@ class ForensicWindow(QMainWindow):
                      lambda t, d: self._agg_dict_view.show_error(t, d))
 
     def _launch(self, token, parser_cls, on_done, on_error):
+        self._total_count += 1
         src = self._source
 
         def _done(tok, recs):

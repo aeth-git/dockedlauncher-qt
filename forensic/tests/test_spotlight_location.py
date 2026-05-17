@@ -14,43 +14,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 APPLE_EPOCH = 978307200  # seconds between 1970-01-01 and 2001-01-01
 
 
-# ── Backup helpers ────────────────────────────────────────────────────────────
-
-def _make_backup(tmp_path, *triples):
-    """Build a minimal synthetic iTunes backup and return an opened BackupSource.
-
-    Each element of *triples is a (domain, rel_path, content_bytes) tuple.
-    """
-    from forensic.sources.backup import BackupSource
-
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    file_map = {}
-    for domain, rel, content in triples:
-        fid = hashlib.sha1(f"{domain}-{rel}".encode()).hexdigest()
-        (tmp_path / fid[:2]).mkdir(parents=True, exist_ok=True)
-        (tmp_path / fid[:2] / fid).write_bytes(content)
-        file_map[(domain, rel)] = fid
-
-    conn = sqlite3.connect(str(tmp_path / "Manifest.db"))
-    conn.execute(
-        "CREATE TABLE Files "
-        "(fileID TEXT, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)"
-    )
-    for (dom, rel), fid in file_map.items():
-        conn.execute("INSERT INTO Files VALUES (?,?,?,?,?)", (fid, dom, rel, 1, None))
-    conn.commit()
-    conn.close()
-
-    (tmp_path / "Manifest.plist").write_bytes(
-        plistlib.dumps({"IsEncrypted": False})
-    )
-    (tmp_path / "Info.plist").write_bytes(
-        plistlib.dumps({"Device Name": "Test iPhone", "Product Version": "16.3.1"})
-    )
-
-    src = BackupSource(str(tmp_path))
-    src.open()
-    return src
+from forensic.tests.conftest import make_backup as _make_backup
 
 
 # ── DB builders ───────────────────────────────────────────────────────────────

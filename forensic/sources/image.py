@@ -60,12 +60,12 @@ class ImageSource(DataSource):
         try:
             if name.endswith(".zip"):
                 with zipfile.ZipFile(self._input, "r") as z:
-                    z.extractall(self._temp_dir)
+                    self._safe_extractall_zip(z, self._temp_dir)
             elif any(name.endswith(s) for s in (".tar", ".tar.gz", ".tgz",
                                                   ".tar.bz2", ".tbz2",
                                                   ".tar.xz", ".txz")):
                 with tarfile.open(self._input) as t:
-                    t.extractall(self._temp_dir)
+                    self._safe_extractall_tar(t, self._temp_dir)
             else:
                 raise IOError(
                     f"Unsupported archive format: {self._input.suffix}. "
@@ -75,6 +75,24 @@ class ImageSource(DataSource):
             shutil.rmtree(self._temp_dir, ignore_errors=True)
             raise IOError(f"Failed to extract archive: {e}") from e
         self._root = self._temp_dir
+
+    @staticmethod
+    def _safe_extractall_zip(zf: zipfile.ZipFile, dest: Path) -> None:
+        dest_resolved = dest.resolve()
+        for member in zf.namelist():
+            target = (dest / member).resolve()
+            if not str(target).startswith(str(dest_resolved) + os.sep) and target != dest_resolved:
+                raise IOError(f"Path traversal detected in archive: {member}")
+        zf.extractall(dest)
+
+    @staticmethod
+    def _safe_extractall_tar(tf: tarfile.TarFile, dest: Path) -> None:
+        dest_resolved = dest.resolve()
+        for member in tf.getmembers():
+            target = (dest / member.name).resolve()
+            if not str(target).startswith(str(dest_resolved) + os.sep) and target != dest_resolved:
+                raise IOError(f"Path traversal detected in archive: {member.name}")
+        tf.extractall(dest)
 
     def get_file(self, domain: str, relative_path: str) -> Optional[Path]:
         if self._delegate:

@@ -180,10 +180,16 @@ class IOCChecker(BaseParser):
             return []
 
         threshold = 100 * 1024 * 1024   # 100 MB
+        _unit_mult = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
         findings = []
         for u in usage:
-            # Sum raw cellular + wifi out
-            total_out = int(u.get("wifi_out", "0 B").split()[0].replace(",", "") or 0)
+            parts = u.get("wifi_out", "0 B").split()
+            try:
+                num = float(parts[0].replace(",", "")) if parts else 0.0
+                mult = _unit_mult.get(parts[1].upper(), 1) if len(parts) >= 2 else 1
+                total_out = num * mult
+            except (ValueError, IndexError):
+                total_out = 0.0
             if total_out > threshold:
                 findings.append({
                     "severity": "LOW",

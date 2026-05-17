@@ -19,7 +19,7 @@ def apple_ts(val) -> Optional[str]:
         if val > 1e10:          # nanoseconds
             val = val / 1_000_000_000
         unix = APPLE_EPOCH + val
-        return datetime.datetime.utcfromtimestamp(unix).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.datetime.fromtimestamp(unix, tz=datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
         return None
 
@@ -34,7 +34,7 @@ def unix_ts(val) -> Optional[str]:
         val = float(val)
         if val > 1e10:          # milliseconds
             val = val / 1000
-        return datetime.datetime.utcfromtimestamp(val).strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.datetime.fromtimestamp(val, tz=datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
         return None
 

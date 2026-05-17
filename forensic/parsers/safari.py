@@ -22,20 +22,6 @@ _HISTORY_SQL = """
     ORDER BY hv.visit_time DESC
 """
 
-_BOOKMARKS_DB = ("HomeDomain", "Library/Safari/Bookmarks.db")
-
-_BOOKMARKS_SQL = """
-    SELECT
-        b.id            AS id,
-        b.title         AS title,
-        u.url           AS url,
-        b.special_id    AS folder
-    FROM bookmarks b
-    LEFT JOIN bookmark_urls u ON b.id = u.bookmark_id
-    WHERE b.type = 1
-    ORDER BY b.id
-"""
-
 
 class SafariParser(BaseParser):
     def parse(self) -> List[dict]:
@@ -64,22 +50,3 @@ class SafariParser(BaseParser):
         finally:
             conn.close()
 
-    def parse_bookmarks(self) -> List[dict]:
-        try:
-            conn = self._get_db(*_BOOKMARKS_DB)
-        except (FileNotFoundError, ParserError):
-            return []
-        try:
-            tables = probe_tables(conn)
-            if "bookmarks" not in tables:
-                return []
-            rows = conn.execute(_BOOKMARKS_SQL).fetchall()
-            return [{
-                "id": r["id"],
-                "type": "bookmark",
-                "title": r["title"] or "",
-                "url": r["url"] or "",
-                "folder": r["folder"] or 0,
-            } for r in rows]
-        finally:
-            conn.close()

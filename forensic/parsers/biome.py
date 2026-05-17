@@ -71,7 +71,7 @@ def _count_segb_records(data: bytes) -> int:
             record_len = 8 + 4 + payload_len
             # Align to 8 bytes
             record_len = (record_len + 7) & ~7
-            if record_len == 0 or pos + record_len > limit:
+            if pos + record_len > limit:
                 break
             count += 1
             pos += record_len
