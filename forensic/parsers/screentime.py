@@ -2,7 +2,7 @@
 from typing import List
 
 from .base import BaseParser, ParserError
-from .utils import apple_ts, probe_tables
+from .utils import apple_ts, probe_tables, fmt_duration
 from ..logger import get_logger
 
 _log = get_logger("parsers.screentime")
@@ -22,14 +22,6 @@ _USAGE_SQL = """
         ZLASTUSE                AS last_raw
     FROM ZUSAGETIMEDITEM
     ORDER BY ZUSAGETIME DESC
-"""
-
-_CATEGORY_SQL = """
-    SELECT
-        ZNAME       AS name,
-        ZTOTALTIME  AS total_sec
-    FROM ZCATEGORYUSAGETIMEDITEM
-    ORDER BY ZTOTALTIME DESC
 """
 
 
@@ -54,7 +46,7 @@ class ScreenTimeParser(BaseParser):
                         "bundle_id": r["bundle_id"] or "",
                         "launches": r["launches"] or 0,
                         "usage_sec": sec,
-                        "usage_fmt": _fmt_duration(sec),
+                        "usage_fmt": fmt_duration(sec),
                         "first_use": apple_ts(r["first_raw"]),
                         "last_use": apple_ts(r["last_raw"]),
                     })
@@ -63,10 +55,3 @@ class ScreenTimeParser(BaseParser):
         finally:
             conn.close()
 
-
-def _fmt_duration(sec: int) -> str:
-    h = sec // 3600
-    m = (sec % 3600) // 60
-    if h:
-        return f"{h}h {m}m"
-    return f"{m}m"

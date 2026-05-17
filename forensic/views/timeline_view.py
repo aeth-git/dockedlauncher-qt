@@ -1,17 +1,18 @@
 """Unified Timeline — aggregates all parsed events into one chronological view."""
+import csv
 from typing import List
 
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
-    QPushButton, QFileDialog, QTableView, QHeaderView,
-    QShortcut, QAbstractItemView, QCheckBox,
+    QPushButton, QFileDialog, QTableView,
+    QShortcut, QAbstractItemView,
 )
 
 from .base_view import SEARCH_QSS, TABLE_QSS, TOOLBAR_QSS, BTN_QSS
 from ..constants import (
-    PAPER, HAIRLINE, INK, INK_MUTED, INK_SOFT, RED, FONT_FAMILY,
+    PAPER, HAIRLINE, INK, INK_MUTED, FONT_FAMILY,
     FONT_SIZE_DATA, FONT_SIZE_LABEL, ROW_H,
 )
 from ..case_log import CaseLog
@@ -231,7 +232,6 @@ class TimelineView(QWidget):
         self._count_label.setText(f"{n:,} event{'s' if n != 1 else ''}")
 
     def _on_export(self):
-        import csv
         if not self._filtered:
             return
         path, _ = QFileDialog.getSaveFileName(

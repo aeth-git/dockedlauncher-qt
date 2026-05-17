@@ -144,12 +144,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
 {sections}
 
-{notes_block}
+<div class="notes"><strong>Examiner Notes</strong><br>{notes}</div>
 </body>
 </html>
-""".replace("{notes_block}",
-            '<div class="notes"><strong>Examiner Notes</strong><br>{notes}</div>'
-            if "{notes}" else "")
+"""
 
 
 def export_html(path: str, **kwargs) -> None:

@@ -7,13 +7,13 @@ from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyM
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel,
-    QPushButton, QFileDialog, QTableView, QHeaderView,
-    QShortcut, QAbstractItemView, QSizePolicy, QAction, QMenu,
+    QPushButton, QFileDialog, QTableView,
+    QShortcut, QAbstractItemView, QMenu,
 )
 
 from ..constants import (
-    PAPER, PAPER_SOFT, INK, INK_SOFT, INK_MUTED, HAIRLINE, HOVER, RED,
-    FONT_FAMILY, FONT_SIZE_DATA, FONT_SIZE_LABEL, ROW_H, HEADER_H,
+    PAPER, PAPER_SOFT, INK, INK_MUTED, HAIRLINE, HOVER,
+    FONT_FAMILY, FONT_SIZE_DATA, FONT_SIZE_LABEL, ROW_H,
 )
 from ..case_log import CaseLog
 from ..logger import get_logger
@@ -279,13 +279,14 @@ class BaseTabView(QWidget):
 
     def show_empty(self, message: str):
         self._count_label.setText("—")
-        self._export_btn.setEnabled(False)
-        if self._table:
-            self._model = _RecordModel([], self.COLUMNS)
-            self._table.setModel(self._model)
+        self._reset_table()
 
     def show_error(self, title: str, detail: str = ""):
         self._count_label.setText("Error")
+        self._reset_table()
+
+    def _reset_table(self):
+        """Disable export and clear the table model."""
         self._export_btn.setEnabled(False)
         if self._table:
             self._model = _RecordModel([], self.COLUMNS)
@@ -336,17 +337,26 @@ class BaseTabView(QWidget):
             self._case_log.log_export(path, len(flat_records))
         _log.info("Exported %d records to %s", len(flat_records), path)
 
+    @staticmethod
+    def _csv_safe(val) -> str:
+        """Prefix formula-injection characters to prevent Excel/Sheets formula execution."""
+        s = str(val)
+        if s and s[0] in ('=', '+', '-', '@', '\t', '\r'):
+            return "'" + s
+        return s
+
     def _flatten(self, record: dict) -> dict:
         """Flatten nested lists to comma-joined strings for CSV."""
         out = {}
         for k, v in record.items():
             if isinstance(v, list):
-                out[k] = "; ".join(
+                raw = "; ".join(
                     str(item.get("value", item)) if isinstance(item, dict) else str(item)
                     for item in v
                 )
+                out[k] = self._csv_safe(raw)
             else:
-                out[k] = v
+                out[k] = self._csv_safe(v) if v is not None else ""
         return out
 
     def _on_context_menu(self, pos):

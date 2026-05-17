@@ -64,3 +64,9 @@ def probe_tables(conn) -> list:
     """Return list of table names in a SQLite database."""
     cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     return [row[0] for row in cur.fetchall()]
+
+
+def fmt_duration(sec: int) -> str:
+    """Format a duration in seconds as a human-readable string (e.g. '3m 5s' or '45s')."""
+    sec = int(sec or 0)
+    return f"{sec // 60}m {sec % 60}s" if sec >= 60 else f"{sec}s"

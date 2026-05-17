@@ -39,9 +39,7 @@ _BOOKMARKS_SQL = """
 
 class SafariParser(BaseParser):
     def parse(self) -> List[dict]:
-        records = []
-        records.extend(self._parse_history())
-        return records
+        return self._parse_history()
 
     def _parse_history(self) -> List[dict]:
         try:

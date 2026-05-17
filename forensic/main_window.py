@@ -51,6 +51,19 @@ from .views.sms_recovery_view import SMSRecoveryView
 from .views.biome_view import BiomeView
 from .views.health_view import HealthView
 from .views.ioc_view import IOCView
+from .views.safari_cloud_tabs_view import SafariCloudTabsView
+from .views.safari_downloads_view import SafariDownloadsView
+from .views.safari_bookmarks_view import SafariBookmarksView
+from .views.safari_cookies_view import SafariBinaryCookiesView
+from .views.siri_view import SiriView
+from .views.app_store_view import AppStoreView
+from .views.spotlight_view import SpotlightView
+from .views.location_cloud_view import LocationCloudView
+from .views.crash_logs_view import CrashLogsView
+from .views.springboard_view import SpringBoardView
+from .views.homekit_view import HomeKitView
+from .views.powerlog_view import PowerLogView
+from .views.agg_dict_view import AggregatedDictView
 
 _log = get_logger("main_window")
 
@@ -409,6 +422,19 @@ class ForensicWindow(QMainWindow):
         self._biome_view         = BiomeView(case_log=self._case_log)
         self._health_view        = HealthView(case_log=self._case_log)
         self._ioc_view           = IOCView(case_log=self._case_log)
+        self._safari_tabs_view   = SafariCloudTabsView(case_log=self._case_log)
+        self._safari_dl_view     = SafariDownloadsView(case_log=self._case_log)
+        self._safari_bm_view     = SafariBookmarksView(case_log=self._case_log)
+        self._safari_cookies_view = SafariBinaryCookiesView(case_log=self._case_log)
+        self._siri_view          = SiriView(case_log=self._case_log)
+        self._app_store_view     = AppStoreView(case_log=self._case_log)
+        self._spotlight_view     = SpotlightView(case_log=self._case_log)
+        self._location_cloud_view = LocationCloudView(case_log=self._case_log)
+        self._crash_logs_view    = CrashLogsView(case_log=self._case_log)
+        self._springboard_view   = SpringBoardView(case_log=self._case_log)
+        self._homekit_view       = HomeKitView(case_log=self._case_log)
+        self._powerlog_view      = PowerLogView(case_log=self._case_log)
+        self._agg_dict_view      = AggregatedDictView(case_log=self._case_log)
         self._report_view        = ReportView()
 
         tabs.addTab(self._ioc_view,          "Security")
@@ -438,6 +464,19 @@ class ForensicWindow(QMainWindow):
         tabs.addTab(self._deleted_apps_view, "Deleted Apps")
         tabs.addTab(self._sms_recovery_view, "SMS Recovery")
         tabs.addTab(self._apps_view,         "Apps")
+        tabs.addTab(self._safari_tabs_view,  "Cloud Tabs")
+        tabs.addTab(self._safari_dl_view,    "Downloads")
+        tabs.addTab(self._safari_bm_view,    "Bookmarks")
+        tabs.addTab(self._safari_cookies_view, "Cookies")
+        tabs.addTab(self._siri_view,         "Siri")
+        tabs.addTab(self._app_store_view,    "App Store")
+        tabs.addTab(self._spotlight_view,    "Spotlight")
+        tabs.addTab(self._location_cloud_view, "Sig. Locations")
+        tabs.addTab(self._crash_logs_view,   "Crash Logs")
+        tabs.addTab(self._springboard_view,  "Home Screen")
+        tabs.addTab(self._homekit_view,      "HomeKit")
+        tabs.addTab(self._powerlog_view,     "PowerLog")
+        tabs.addTab(self._agg_dict_view,     "Agg. Metrics")
         tabs.addTab(self._report_view,       "Report")
 
         return tabs
@@ -571,7 +610,7 @@ class ForensicWindow(QMainWindow):
         self._session_token += 1
         token = self._session_token
 
-        self._total_count = 36
+        self._total_count = 49
         self._loaded_count = 0
         self._status.showMessage(f"Loading data… 0 / {self._total_count}")
 
@@ -799,6 +838,95 @@ class ForensicWindow(QMainWindow):
                      lambda recs: (self._sms_recovery_view.load_records(recs),
                                    _report("SMS Deletion Events", recs)),
                      lambda t, d: self._sms_recovery_view.show_error(t, d))
+
+        # ── Safari extended ──────────────────────────────────────────────────
+        from .parsers.safari_extended import (
+            SafariCloudTabsParser, SafariDownloadsParser, SafariBookmarksParser,
+        )
+        from .parsers.safari_cookies import SafariBinaryCookiesParser
+
+        self._launch(token, SafariCloudTabsParser,
+                     lambda recs: (self._safari_tabs_view.load_records(recs),
+                                   _report("Safari Cloud Tabs", recs)),
+                     lambda t, d: self._safari_tabs_view.show_error(t, d))
+
+        self._launch(token, SafariDownloadsParser,
+                     lambda recs: (self._safari_dl_view.load_records(recs),
+                                   _report("Safari Downloads", recs)),
+                     lambda t, d: self._safari_dl_view.show_error(t, d))
+
+        self._launch(token, SafariBookmarksParser,
+                     lambda recs: (self._safari_bm_view.load_records(recs),
+                                   _report("Safari Bookmarks", recs)),
+                     lambda t, d: self._safari_bm_view.show_error(t, d))
+
+        self._launch(token, SafariBinaryCookiesParser,
+                     lambda recs: (self._safari_cookies_view.load_records(recs),
+                                   _report("Safari Cookies", recs)),
+                     lambda t, d: self._safari_cookies_view.show_error(t, d))
+
+        # ── Siri + App Store ─────────────────────────────────────────────────
+        from .parsers.siri_analytics import SiriAnalyticsParser
+        from .parsers.app_store      import AppStorePurchasesParser
+
+        self._launch(token, SiriAnalyticsParser,
+                     lambda recs: (self._siri_view.load_records(recs),
+                                   _report("Siri Analytics", recs)),
+                     lambda t, d: self._siri_view.show_error(t, d))
+
+        self._launch(token, AppStorePurchasesParser,
+                     lambda recs: (self._app_store_view.load_records(recs),
+                                   _report("App Store Purchases", recs)),
+                     lambda t, d: self._app_store_view.show_error(t, d))
+
+        # ── Spotlight + significant locations ────────────────────────────────
+        from .parsers.spotlight       import SpotlightParser
+        from .parsers.location_cloud  import LocationCloudParser
+
+        self._launch(token, SpotlightParser,
+                     lambda recs: (self._spotlight_view.load_records(recs),
+                                   _report("Spotlight Index", recs)),
+                     lambda t, d: self._spotlight_view.show_error(t, d))
+
+        self._launch(token, LocationCloudParser,
+                     lambda recs: (self._location_cloud_view.load_records(recs),
+                                   _tl("location_cloud", recs),
+                                   _report("Significant Locations", recs)),
+                     lambda t, d: self._location_cloud_view.show_error(t, d))
+
+        # ── Crash logs + SpringBoard ─────────────────────────────────────────
+        from .parsers.crash_logs  import CrashLogParser
+        from .parsers.springboard import SpringBoardParser
+
+        self._launch(token, CrashLogParser,
+                     lambda recs: (self._crash_logs_view.load_records(recs),
+                                   _report("Crash Logs", recs)),
+                     lambda t, d: self._crash_logs_view.show_error(t, d))
+
+        self._launch(token, SpringBoardParser,
+                     lambda recs: (self._springboard_view.load_records(recs),
+                                   _report("Home Screen Layout", recs)),
+                     lambda t, d: self._springboard_view.show_error(t, d))
+
+        # ── HomeKit + PowerLog + Aggregated Metrics ──────────────────────────
+        from .parsers.homekit          import HomeKitParser
+        from .parsers.powerlog         import PowerLogParser
+        from .parsers.aggregated_dict  import AggregatedDictParser
+
+        self._launch(token, HomeKitParser,
+                     lambda recs: (self._homekit_view.load_records(recs),
+                                   _report("HomeKit Devices", recs)),
+                     lambda t, d: self._homekit_view.show_error(t, d))
+
+        self._launch(token, PowerLogParser,
+                     lambda recs: (self._powerlog_view.load_records(recs),
+                                   _report("PowerLog", recs)),
+                     lambda t, d: self._powerlog_view.show_error(t, d))
+
+        self._launch(token, AggregatedDictParser,
+                     lambda recs: (self._agg_dict_view.load_records(recs),
+                                   _report("Aggregated Metrics", recs)),
+                     lambda t, d: self._agg_dict_view.show_error(t, d))
 
     def _launch(self, token, parser_cls, on_done, on_error):
         src = self._source

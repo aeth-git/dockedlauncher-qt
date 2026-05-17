@@ -2,7 +2,7 @@
 from typing import List
 
 from .base import BaseParser
-from .utils import apple_ts
+from .utils import apple_ts, fmt_duration
 from ..constants import CALL_DB
 from ..logger import get_logger
 
@@ -39,7 +39,7 @@ class CallParser(BaseParser):
                 # ZDATE is Apple-epoch seconds (Core Data — never nanoseconds)
                 ts = apple_ts(row["raw_date"])
                 dur = int(row["duration_sec"] or 0)
-                dur_fmt = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
+                dur_fmt = fmt_duration(dur)
                 records.append({
                     "id": row["id"],
                     "timestamp": ts,

@@ -35,18 +35,27 @@ class CaseLog:
             user = os.environ.get("USER", os.environ.get("USERNAME", "unknown"))
         self._log.info(f"SESSION START | tool=iForensic | user={user}")
 
+    @staticmethod
+    def _sanitize(value: str) -> str:
+        """Strip newline characters to prevent log injection."""
+        return str(value).replace('\n', ' ').replace('\r', ' ')
+
     def log_source_opened(self, path: str, sha256: str = None):
         if sha256 is None and os.path.isfile(path):
             sha256 = _sha256(path)
-        self._log.info(f"SOURCE OPENED | path={path} | sha256={sha256}")
+        path_safe = self._sanitize(path)
+        self._log.info(f"SOURCE OPENED | path={path_safe} | sha256={sha256}")
 
     def log_file_accessed(self, domain: str, rel_path: str, local_path: str):
         sha256 = _sha256(local_path) if os.path.isfile(local_path) else "n/a"
-        self._log.info(f"FILE ACCESSED | domain={domain} | path={rel_path} | sha256={sha256}")
+        domain_safe = self._sanitize(domain)
+        rel_path_safe = self._sanitize(rel_path)
+        self._log.info(f"FILE ACCESSED | domain={domain_safe} | path={rel_path_safe} | sha256={sha256}")
 
     def log_export(self, destination: str, record_count: int):
         sha256 = _sha256(destination) if os.path.isfile(destination) else "n/a"
-        self._log.info(f"EXPORT | destination={destination} | records={record_count} | sha256={sha256}")
+        destination_safe = self._sanitize(destination)
+        self._log.info(f"EXPORT | destination={destination_safe} | records={record_count} | sha256={sha256}")
 
     def log_hash_mismatch(self, path: str, before: str, after: str):
         self._log.warning(f"HASH MISMATCH | path={path} | before={before} | after={after}")

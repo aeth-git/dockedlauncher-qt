@@ -2,7 +2,7 @@
 from typing import List
 
 from .base import BaseParser, ParserError
-from .utils import unix_ts, probe_tables
+from .utils import unix_ts, probe_tables, fmt_duration
 from ..logger import get_logger
 
 _log = get_logger("parsers.voicemail")
@@ -39,7 +39,7 @@ class VoicemailParser(BaseParser):
             records = []
             for r in rows:
                 dur = int(r["duration_sec"] or 0)
-                dur_fmt = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
+                dur_fmt = fmt_duration(dur)
                 records.append({
                     "id": r["id"],
                     "timestamp": unix_ts(r["raw_date"]),
