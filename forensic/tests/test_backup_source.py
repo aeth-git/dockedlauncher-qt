@@ -153,3 +153,56 @@ class TestBackupSourceAppDomains:
             assert len(src._file_map) > 0
         # After exit, file_map is cleared
         assert len(src._file_map) == 0
+
+
+# ── ImageSource path-traversal (zip/tar slip) ─────────────────────────────
+
+class TestImageSourceZipSlip:
+    """Crafted archives with path-traversal entries must raise IOError."""
+
+    def _make_traversal_zip(self, tmp_path) -> Path:
+        import io, zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("safe.txt", "safe")
+            zf.writestr(zipfile.ZipInfo("../../outside.txt"), "malicious")
+        p = tmp_path / "traversal.zip"
+        p.write_bytes(buf.getvalue())
+        return p
+
+    def _make_traversal_tar(self, tmp_path) -> Path:
+        import io, tarfile
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tf:
+            payload = b"malicious"
+            info = tarfile.TarInfo("../../outside.txt")
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+        p = tmp_path / "traversal.tar"
+        p.write_bytes(buf.getvalue())
+        return p
+
+    def test_zip_path_traversal_raises(self, tmp_path):
+        from forensic.sources.image import ImageSource
+        src = ImageSource(str(self._make_traversal_zip(tmp_path)))
+        with pytest.raises(IOError, match="[Pp]ath traversal|Failed to extract"):
+            src.open()
+
+    def test_tar_path_traversal_raises(self, tmp_path):
+        from forensic.sources.image import ImageSource
+        src = ImageSource(str(self._make_traversal_tar(tmp_path)))
+        with pytest.raises(IOError, match="[Pp]ath traversal|Failed to extract"):
+            src.open()
+
+    def test_clean_zip_opens_without_error(self, tmp_path, backup_root):
+        """A well-formed zip that contains a valid backup should open fine."""
+        import zipfile
+        from forensic.sources.image import ImageSource
+        zip_path = tmp_path / "clean.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for f in backup_root.rglob("*"):
+                if f.is_file():
+                    zf.write(f, f.relative_to(backup_root))
+        src = ImageSource(str(zip_path))
+        src.open()  # must not raise
+        src.close()

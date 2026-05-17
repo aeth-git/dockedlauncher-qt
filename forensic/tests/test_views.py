@@ -283,6 +283,33 @@ class TestCsvExport:
         assert "Alice" in content
         assert "timestamp" in content
 
+    def test_photos_csv_sanitizes_formula_filename(self, qapp, tmp_path):
+        from forensic.views.photos_view import PhotosView
+        from unittest.mock import patch
+
+        view = PhotosView()
+        records = [
+            {"filename": "=cmd|' /C calc'!A1.jpg", "size": "100 KB",
+             "local_path": "/tmp/x.jpg", "rel_path": "DCIM/100APPLE/x.jpg",
+             "ext": ".jpg", "is_video": False},
+            {"filename": "+formula.jpg", "size": "50 KB",
+             "local_path": "/tmp/y.jpg", "rel_path": "DCIM/100APPLE/y.jpg",
+             "ext": ".jpg", "is_video": False},
+        ]
+        view.load_records(records)
+        out = tmp_path / "photos.csv"
+
+        with patch("forensic.views.photos_view.QFileDialog.getSaveFileName",
+                   return_value=(str(out), "CSV Files (*.csv)")):
+            view._on_export()
+
+        content = out.read_text(encoding="utf-8-sig")
+        # Formula characters must be prefixed with ' — bare leading '=' and '+' must not appear
+        lines = [l for l in content.splitlines() if l.strip() and not l.startswith("filename")]
+        assert len(lines) == 2
+        assert lines[0].startswith("'=cmd")
+        assert lines[1].startswith("'+formula")
+
     def test_contacts_csv_flattens_lists(self, qapp, tmp_path):
         from forensic.views.contacts_view import ContactsView
         view = ContactsView()

@@ -63,6 +63,42 @@ class TestUnixTs:
         assert "2022-06-15" in result
 
 
+class TestCaseLogInjection:
+    def test_hash_mismatch_newline_does_not_inject(self, tmp_path, monkeypatch):
+        import forensic.case_log as cl_mod
+        from forensic.case_log import CaseLog
+
+        monkeypatch.setattr(cl_mod, "LOG_DIR", str(tmp_path))
+        log = CaseLog()
+        # Embed a \n to attempt a forged standalone log entry
+        log.log_hash_mismatch(
+            "path/to/backup\nFAKE LOG ENTRY | forged=true",
+            "aaaa",
+            "bbbb"
+        )
+        log_files = list(tmp_path.glob("case_*.log"))
+        assert len(log_files) == 1
+        lines = log_files[0].read_text(encoding="utf-8").splitlines()
+        # Exactly one HASH MISMATCH entry — the injected \n was collapsed to a space
+        assert sum(1 for l in lines if "HASH MISMATCH" in l) == 1
+        # "FAKE LOG ENTRY" must not appear on a standalone line (only on the HASH MISMATCH line)
+        standalone = [l for l in lines if "FAKE LOG ENTRY" in l and "HASH MISMATCH" not in l]
+        assert standalone == []
+
+    def test_sanitize_strips_control_chars(self, tmp_path, monkeypatch):
+        import forensic.case_log as cl_mod
+        from forensic.case_log import CaseLog
+
+        monkeypatch.setattr(cl_mod, "LOG_DIR", str(tmp_path))
+        log = CaseLog()
+        # \x00 and \x1b (ESC) are stripped; only \n/\r survive as spaces
+        log.log_source_opened("path\x00with\x1bnulls")
+        log_files = list(tmp_path.glob("case_*.log"))
+        content = log_files[0].read_text(encoding="utf-8")
+        assert "\x00" not in content
+        assert "\x1b" not in content
+
+
 class TestKeyedArchiveStr:
     def test_empty_bytes_returns_empty(self):
         assert keyed_archive_str(b"") == ""

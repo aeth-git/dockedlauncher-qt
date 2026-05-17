@@ -983,6 +983,28 @@ class TestLINEParser:
         finally:
             src.close()
 
+    def test_sent_message_direction(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            # message from "u0" (self) must be Sent
+            sent = [r for r in records if r["body"] == "LINE reply"]
+            assert len(sent) == 1
+            assert sent[0]["direction"] == "Sent"
+        finally:
+            src.close()
+
+    def test_received_message_direction(self, line_root):
+        src = _open(line_root)
+        try:
+            records = LINEParser(src).parse()
+            # message from "u_alice" (other party) must be Received
+            received = [r for r in records if r["body"] == "Hello LINE!"]
+            assert len(received) == 1
+            assert received[0]["direction"] == "Received"
+        finally:
+            src.close()
+
 
 # ── Skype ─────────────────────────────────────────────────────────────────────
 
@@ -1781,3 +1803,87 @@ class TestSecondRoundIntegration:
         assert len(records) >= 1
         assert all(r["severity"] in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
                    for r in records)
+
+
+# ── IOC data-usage threshold ──────────────────────────────────────────────
+
+def _make_data_usage_db_bytes(wifi_out_bytes: int) -> bytes:
+    """Minimal DataUsage.sqlite with one process whose wifi_out is wifi_out_bytes."""
+    import os, sqlite3, tempfile
+    from pathlib import Path
+    tmp = tempfile.mktemp(suffix=".db")
+    conn = sqlite3.connect(tmp)
+    conn.executescript("""
+        CREATE TABLE ZPROCESS (
+            Z_PK INTEGER PRIMARY KEY, ZBUNDLENAME TEXT, ZPROCNAME TEXT
+        );
+        CREATE TABLE ZPROCUID (
+            Z_PK INTEGER PRIMARY KEY, ZPROCESS INTEGER,
+            ZWIFIIN INTEGER, ZWIFIOUT INTEGER,
+            ZWIRELESSWANIN INTEGER, ZWIRELESSWANOUT INTEGER, ZTIMESTAMP REAL
+        );
+    """)
+    t = 1655287200 - 978307200
+    conn.execute("INSERT INTO ZPROCESS VALUES (1,'com.test.app','TestApp')")
+    conn.execute("INSERT INTO ZPROCUID VALUES (1,1,0,?,0,0,?)", (wifi_out_bytes, t))
+    conn.commit()
+    conn.close()
+    data = Path(tmp).read_bytes()
+    os.unlink(tmp)
+    return data
+
+
+class TestIOCDataUsageThreshold:
+    def test_above_threshold_fires_finding(self, tmp_path):
+        from forensic.parsers.ioc_checker import IOCChecker
+        from forensic.tests.conftest import make_backup
+        # 200 MB — well above the 100 MB threshold
+        src = make_backup(
+            tmp_path,
+            ("WirelessDomain", "Library/Databases/DataUsage.sqlite",
+             _make_data_usage_db_bytes(200 * 1024 * 1024)),
+        )
+        try:
+            records = IOCChecker(src).parse()
+            upload_findings = [r for r in records if r["category"] == "Anomalous Upload"]
+            assert len(upload_findings) == 1
+            assert upload_findings[0]["bundle_id"] == "com.test.app"
+            assert upload_findings[0]["severity"] == "LOW"
+        finally:
+            src.close()
+
+    def test_below_threshold_no_finding(self, tmp_path):
+        from forensic.parsers.ioc_checker import IOCChecker
+        from forensic.tests.conftest import make_backup
+        # 50 MB — below the 100 MB threshold
+        sub = tmp_path / "low"
+        sub.mkdir()
+        src = make_backup(
+            sub,
+            ("WirelessDomain", "Library/Databases/DataUsage.sqlite",
+             _make_data_usage_db_bytes(50 * 1024 * 1024)),
+        )
+        try:
+            records = IOCChecker(src).parse()
+            upload_findings = [r for r in records if r["category"] == "Anomalous Upload"]
+            assert len(upload_findings) == 0
+        finally:
+            src.close()
+
+    def test_exactly_at_threshold_no_finding(self, tmp_path):
+        from forensic.parsers.ioc_checker import IOCChecker
+        from forensic.tests.conftest import make_backup
+        # Exactly 100 MB — threshold is strictly greater than, so no finding
+        sub = tmp_path / "exact"
+        sub.mkdir()
+        src = make_backup(
+            sub,
+            ("WirelessDomain", "Library/Databases/DataUsage.sqlite",
+             _make_data_usage_db_bytes(100 * 1024 * 1024)),
+        )
+        try:
+            records = IOCChecker(src).parse()
+            upload_findings = [r for r in records if r["category"] == "Anomalous Upload"]
+            assert len(upload_findings) == 0
+        finally:
+            src.close()
