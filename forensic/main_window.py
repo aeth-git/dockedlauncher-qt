@@ -11,7 +11,7 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTabWidget, QTabBar, QStackedWidget, QStatusBar, QFileDialog, QMessageBox,
-    QInputDialog, QApplication, QFrame, QShortcut, QSizePolicy,
+    QInputDialog, QApplication, QFrame, QShortcut, QSizePolicy, QProgressDialog,
 )
 
 from .constants import (
@@ -141,6 +141,31 @@ class _Worker(QObject):
             self.error.emit(self._token, title, detail)
 
 
+class _ExtractWorker(QObject):
+    """Runs BackupExtractor.extract() in a background thread."""
+    progress = pyqtSignal(int, int, str)   # (done, total, current_path)
+    finished = pyqtSignal(int, int, int, list)  # (total, copied, skipped, errors)
+    error    = pyqtSignal(str)
+
+    def __init__(self, extractor):
+        super().__init__()
+        self._extractor = extractor
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            result = self._extractor.extract(
+                progress_cb=lambda done, total, path: self.progress.emit(done, total, path),
+                cancelled_cb=lambda: self._cancelled,
+            )
+            self.finished.emit(result.total, result.copied, result.skipped, result.errors)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 def _start_worker(token, parser_cls, source, on_done, on_error):
     """Create a QObject worker, move it to a QThread, wire signals, start."""
     thread = QThread()
@@ -264,9 +289,9 @@ class _SplashWidget(QWidget):
 # ── Slim source bar (shown after load) ───────────────────────────────────────
 
 class _SlimBar(QWidget):
-    """Thin 52px bar showing active source + device info + change button."""
+    """Thin 52px bar showing active source + device info + action buttons."""
 
-    def __init__(self, on_change, parent=None):
+    def __init__(self, on_change, on_extract, parent=None):
         super().__init__(parent)
         self.setFixedHeight(SOURCE_BAR_H)
         self.setStyleSheet(
@@ -299,13 +324,21 @@ class _SlimBar(QWidget):
         )
         self._device_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        change_btn = QPushButton("Change Source")
-        change_btn.setFixedHeight(26)
-        change_btn.setStyleSheet(
+        _btn_qss = (
             f"QPushButton {{ background:{PAPER}; color:{INK}; border:1px solid {HAIRLINE};"
             f" font-family:{FONT_FAMILY}; font-size:10px; padding:0 10px; }}"
             f"QPushButton:hover {{ border-color:{INK}; }}"
         )
+
+        extract_btn = QPushButton("Extract Files")
+        extract_btn.setFixedHeight(26)
+        extract_btn.setStyleSheet(_btn_qss)
+        extract_btn.setCursor(Qt.PointingHandCursor)
+        extract_btn.clicked.connect(on_extract)
+
+        change_btn = QPushButton("Change Source")
+        change_btn.setFixedHeight(26)
+        change_btn.setStyleSheet(_btn_qss)
         change_btn.setCursor(Qt.PointingHandCursor)
         change_btn.clicked.connect(on_change)
 
@@ -316,6 +349,8 @@ class _SlimBar(QWidget):
         row.addWidget(self._source_label)
         row.addSpacing(16)
         row.addWidget(self._device_label, 1)
+        row.addWidget(extract_btn)
+        row.addSpacing(6)
         row.addWidget(change_btn)
 
     def set_source(self, source_label: str, device_info: dict):
@@ -367,7 +402,7 @@ class ForensicWindow(QMainWindow):
             on_device=self._select_device,
             on_image=self._select_image,
         )
-        self._slim_bar = _SlimBar(on_change=self._go_splash)
+        self._slim_bar = _SlimBar(on_change=self._go_splash, on_extract=self._select_extract)
         self._slim_bar.hide()  # hidden until source loaded
 
         self._root_layout.addWidget(self._slim_bar)
@@ -535,6 +570,79 @@ class ForensicWindow(QMainWindow):
         if not path:
             return
         self._open_source("image", path)
+
+    def _select_extract(self):
+        if not self._source:
+            return
+
+        from .extractor import BackupExtractor, _backup_parts
+        root, file_map = _backup_parts(self._source)
+        if root is None:
+            QMessageBox.warning(
+                self, "Not Supported",
+                "Full extraction is not available for live-device sources.\n"
+                "Use a backup or forensic image instead."
+            )
+            return
+
+        dest = QFileDialog.getExistingDirectory(
+            self, "Select Output Directory for Extracted Files",
+            os.path.expanduser("~")
+        )
+        if not dest:
+            return
+
+        extractor = BackupExtractor(self._source, dest, self._case_log)
+
+        progress = QProgressDialog("Preparing extraction…", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Extracting Files")
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(420)
+        progress.setValue(0)
+
+        thread = QThread()
+        worker = _ExtractWorker(extractor)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        def _on_progress(done, total, path):
+            progress.setMaximum(total)
+            progress.setValue(done)
+            short = path[-55:] if len(path) > 55 else path
+            progress.setLabelText(f"Extracting {done:,} / {total:,} files\n{short}")
+
+        def _on_finished(total, copied, skipped, errors):
+            progress.close()
+            thread.quit()
+            self._status.showMessage(
+                f"Extraction complete — {copied:,} files written to {dest}"
+            )
+            msg = (
+                f"Extraction complete.\n\n"
+                f"Files copied:   {copied:,}\n"
+                f"Files skipped:  {skipped:,}\n"
+                f"Errors:         {len(errors)}\n\n"
+                f"Output:\n{dest}"
+            )
+            if errors:
+                shown = errors[:5]
+                msg += "\n\nFirst error(s):\n" + "\n".join(shown)
+                if len(errors) > 5:
+                    msg += f"\n… and {len(errors) - 5} more"
+            QMessageBox.information(self, "Extraction Complete", msg)
+
+        def _on_error(msg):
+            progress.close()
+            thread.quit()
+            QMessageBox.critical(self, "Extraction Failed", msg)
+
+        worker.progress.connect(_on_progress)
+        worker.finished.connect(_on_finished)
+        worker.error.connect(_on_error)
+        progress.canceled.connect(worker.cancel)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+        progress.exec_()
 
     def _open_source(self, source_type: str, path: str):
         self._cancel_all_workers()
