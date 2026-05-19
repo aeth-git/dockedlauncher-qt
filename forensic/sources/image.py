@@ -16,19 +16,27 @@ _log = get_logger("sources.image")
 
 
 class ImageSource(DataSource):
-    """Supports two formats:
+    """Supports three formats:
       1. iTunes-format directory (contains Manifest.db) — delegates to BackupSource.
       2. Raw filesystem dump (contains private/ at root) — direct path mapping.
+      3. Extracted backup tree (contains HomeDomain/, CameraRollDomain/, ...)
+         — output of BackupExtractor; files live at {root}/{domain}/{rel}.
     Archives (.zip, .tar, .tar.gz, etc.) are extracted to a temp dir first.
     """
 
     source_type = "forensic_image"
+
+    # Marker domains used to detect an extracted backup tree (output of
+    # BackupExtractor). Any one is enough — common across all iOS versions.
+    _EXTRACTED_MARKERS = ("HomeDomain", "CameraRollDomain", "MediaDomain",
+                           "RootDomain", "WirelessDomain")
 
     def __init__(self, path: str):
         self._input = Path(path)
         self._root: Optional[Path] = None
         self._temp_dir: Optional[Path] = None
         self._delegate: Optional[BackupSource] = None
+        self._extracted_tree: bool = False
 
     def open(self) -> None:
         if self._input.is_dir():
@@ -41,6 +49,9 @@ class ImageSource(DataSource):
             _log.info("Detected iTunes backup format at %s", self._root)
             self._delegate = BackupSource(str(self._root))
             self._delegate.open()
+        elif any((self._root / d).is_dir() for d in self._EXTRACTED_MARKERS):
+            _log.info("Detected extracted backup tree at %s", self._root)
+            self._extracted_tree = True
         elif (self._root / "private").exists():
             _log.info("Detected raw filesystem dump at %s", self._root)
         else:
@@ -97,6 +108,9 @@ class ImageSource(DataSource):
     def get_file(self, domain: str, relative_path: str) -> Optional[Path]:
         if self._delegate:
             return self._delegate.get_file(domain, relative_path)
+        if self._extracted_tree:
+            candidate = self._root / domain / relative_path
+            return candidate if candidate.exists() else None
         # Raw filesystem mode
         prefix = DOMAIN_FS_MAP.get(domain, "")
         candidate = self._root / prefix / relative_path
@@ -112,6 +126,15 @@ class ImageSource(DataSource):
     def list_files(self, domain: str, prefix: str) -> List[Tuple[str, Path]]:
         if self._delegate:
             return self._delegate.list_files(domain, prefix)
+        if self._extracted_tree:
+            search_root = self._root / domain / prefix
+            results = []
+            if search_root.exists():
+                for p in search_root.rglob("*"):
+                    if p.is_file():
+                        rel = str(p.relative_to(self._root / domain))
+                        results.append((rel, p))
+            return results
         fs_prefix = DOMAIN_FS_MAP.get(domain, "")
         search_root = self._root / fs_prefix / prefix
         results = []
@@ -121,6 +144,18 @@ class ImageSource(DataSource):
                     rel = str(p.relative_to(self._root / fs_prefix))
                     results.append((rel, p))
         return results
+
+    def list_app_domains(self) -> List[str]:
+        """Mirror BackupSource.list_app_domains for extracted trees."""
+        if self._delegate:
+            return self._delegate.list_app_domains()
+        if self._extracted_tree:
+            return sorted(
+                p.name[len("AppDomain-"):]
+                for p in self._root.iterdir()
+                if p.is_dir() and p.name.startswith("AppDomain-")
+            )
+        return []
 
     def get_device_info(self) -> dict:
         if self._delegate:

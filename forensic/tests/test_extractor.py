@@ -112,6 +112,54 @@ class TestBackupExtractor:
         assert result.total == 0
 
 
+class TestExtractedTreeReopen:
+    """A directory produced by BackupExtractor can be re-opened as an ImageSource."""
+
+    def test_extracted_tree_is_detected(self, backup_source, tmp_path):
+        from forensic.extractor import BackupExtractor
+        from forensic.sources.image import ImageSource
+
+        out = tmp_path / "extracted"
+        BackupExtractor(backup_source, out).extract()
+
+        src = ImageSource(str(out))
+        src.open()
+        try:
+            assert src._extracted_tree is True
+        finally:
+            src.close()
+
+    def test_extracted_tree_get_file(self, backup_source, tmp_path):
+        from forensic.extractor import BackupExtractor
+        from forensic.sources.image import ImageSource
+
+        out = tmp_path / "extracted"
+        BackupExtractor(backup_source, out).extract()
+
+        src = ImageSource(str(out))
+        src.open()
+        try:
+            p = src.get_file("HomeDomain", "Library/SMS/sms.db")
+            assert p is not None and p.exists() and p.stat().st_size > 0
+        finally:
+            src.close()
+
+    def test_extracted_tree_list_files(self, backup_source, tmp_path):
+        from forensic.extractor import BackupExtractor
+        from forensic.sources.image import ImageSource
+
+        out = tmp_path / "extracted"
+        BackupExtractor(backup_source, out).extract()
+
+        src = ImageSource(str(out))
+        src.open()
+        try:
+            files = src.list_files("CameraRollDomain", "Media/DCIM")
+            assert len(files) > 0
+        finally:
+            src.close()
+
+
 class TestImageSourceExtraction:
     """BackupExtractor works when given an ImageSource wrapping a backup zip."""
 
