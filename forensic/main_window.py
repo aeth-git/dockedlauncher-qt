@@ -330,7 +330,7 @@ class _SlimBar(QWidget):
             f"QPushButton:hover {{ border-color:{INK}; }}"
         )
 
-        extract_btn = QPushButton("Extract Files")
+        extract_btn = QPushButton("Full Filesystem Extraction")
         extract_btn.setFixedHeight(26)
         extract_btn.setStyleSheet(_btn_qss)
         extract_btn.setCursor(Qt.PointingHandCursor)

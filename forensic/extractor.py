@@ -93,19 +93,11 @@ class BackupExtractor:
         ]
         result.total = len(items)
 
-        # Route via get_file() when the underlying source can transform paths
-        # (e.g. encrypted backups that lazy-decrypt). Otherwise build the raw
-        # hashed-blob path directly — faster, no per-file Python dispatch.
-        get_file = getattr(self._source, "get_file", None)
-        delegate = getattr(self._source, "_delegate", None)
-        if delegate is not None and hasattr(delegate, "get_file"):
-            get_file = delegate.get_file
-        use_get_file = (
-            get_file is not None
-            and getattr(self._source, "_enc_backup", None) is not None
-        ) or (
-            delegate is not None and getattr(delegate, "_enc_backup", None) is not None
-        )
+        # Prefer the source's extract_to() — for encrypted backups it writes
+        # the decrypted bytes straight to dest (no temp double-copy). Falls
+        # back to direct shutil.copy2 from the hashed blob for raw sources.
+        extractor_obj = getattr(self._source, "_delegate", None) or self._source
+        extract_to = getattr(extractor_obj, "extract_to", None)
 
         for i, ((domain, rel), file_id) in enumerate(items):
             if cancelled_cb and cancelled_cb():
@@ -113,23 +105,27 @@ class BackupExtractor:
                           result.copied, result.total)
                 break
 
-            if use_get_file:
-                src = get_file(domain, rel)
-            else:
-                p = backup_root / file_id[:2] / file_id
-                src = p if p.exists() else None
-
-            if src is None:
-                result.skipped += 1
-                if progress_cb:
-                    progress_cb(i + 1, result.total, f"[missing] {domain}/{rel}")
-                continue
-
             dest = self._dest / domain / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
             try:
-                shutil.copy2(src, dest)
-                result.copied += 1
+                if extract_to is not None:
+                    ok = extract_to(domain, rel, dest)
+                    if ok:
+                        result.copied += 1
+                    else:
+                        result.skipped += 1
+                        if progress_cb:
+                            progress_cb(i + 1, result.total, f"[missing] {domain}/{rel}")
+                        continue
+                else:
+                    src = backup_root / file_id[:2] / file_id
+                    if not src.exists():
+                        result.skipped += 1
+                        if progress_cb:
+                            progress_cb(i + 1, result.total, f"[missing] {domain}/{rel}")
+                        continue
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dest)
+                    result.copied += 1
             except OSError as e:
                 result.errors.append(f"{domain}/{rel}: {e}")
 

@@ -161,6 +161,39 @@ class BackupSource(DataSource):
         physical = self._root / file_id[:2] / file_id
         return physical if physical.exists() else None
 
+    def extract_to(self, domain: str, relative_path: str, dest: Path) -> bool:
+        """Write a single backup file directly to `dest`. Used for bulk extraction
+        to avoid the temp-dir double-copy on encrypted backups.
+
+        Returns True on success, False if the file is missing or fails to decrypt.
+        """
+        file_id = self._file_map.get((domain, relative_path))
+        if not file_id:
+            return False
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if self._enc_backup is not None:
+            try:
+                self._enc_backup.extract_file(
+                    relative_path=relative_path,
+                    domain_like=domain,
+                    output_filename=str(dest),
+                )
+                return dest.exists()
+            except Exception as e:
+                _log.warning("Decrypt-to-dest failed for %s/%s: %s",
+                             domain, relative_path, e)
+                return False
+        physical = self._root / file_id[:2] / file_id
+        if not physical.exists():
+            return False
+        try:
+            shutil.copy2(physical, dest)
+            return True
+        except OSError as e:
+            _log.warning("Copy failed for %s/%s: %s", domain, relative_path, e)
+            return False
+
     def list_files(self, domain: str, prefix: str) -> List[Tuple[str, Path]]:
         results = []
         for (dom, rel), file_id in self._file_map.items():
