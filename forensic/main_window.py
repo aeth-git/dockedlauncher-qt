@@ -652,9 +652,9 @@ class ForensicWindow(QMainWindow):
 
         self._status.showMessage("Opening source…")
 
+        from .sources.backup import BackupSource, EncryptedBackupNeedsPassword
         try:
             if source_type == "backup":
-                from .sources.backup import BackupSource
                 src = BackupSource(path)
                 label = "iTunes Backup"
             elif source_type == "device":
@@ -666,26 +666,32 @@ class ForensicWindow(QMainWindow):
                 src = ImageSource(path)
                 label = "Forensic Image"
 
-            src.open()
-        except PermissionError as e:
-            msg = str(e)
-            if "encrypted" in msg.lower() or "password" in msg.lower():
+            try:
+                src.open()
+            except EncryptedBackupNeedsPassword:
                 from PyQt5.QtWidgets import QLineEdit
-                pwd, ok = QInputDialog.getText(
-                    self, "Encrypted Backup",
-                    "This backup is encrypted. Enter the backup password:",
-                    QLineEdit.Password
-                )
-                if not ok:
-                    return
-                # Re-open with password (future: wire into BackupSource)
-                QMessageBox.information(
-                    self, "Encrypted Backup",
-                    "Encrypted backup decryption via 'iphone-backup-decrypt' "
-                    "is supported. Install it and retry:\n  pip install iphone-backup-decrypt"
-                )
-                return
-            QMessageBox.critical(self, "Permission Denied", msg)
+                while True:
+                    pwd, ok = QInputDialog.getText(
+                        self, "Encrypted Backup",
+                        "This backup is encrypted. Enter the backup password:",
+                        QLineEdit.Password,
+                    )
+                    if not ok or not pwd:
+                        return
+                    src = BackupSource(path, password=pwd)
+                    try:
+                        src.open()
+                        break
+                    except PermissionError as pe:
+                        retry = QMessageBox.question(
+                            self, "Decryption Failed",
+                            f"{pe}\n\nTry a different password?",
+                            QMessageBox.Yes | QMessageBox.No,
+                        )
+                        if retry != QMessageBox.Yes:
+                            return
+        except PermissionError as e:
+            QMessageBox.critical(self, "Permission Denied", str(e))
             return
         except Exception as e:
             QMessageBox.critical(self, "Failed to Open Source", str(e))

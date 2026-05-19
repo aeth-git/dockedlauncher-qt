@@ -93,14 +93,33 @@ class BackupExtractor:
         ]
         result.total = len(items)
 
+        # Route via get_file() when the underlying source can transform paths
+        # (e.g. encrypted backups that lazy-decrypt). Otherwise build the raw
+        # hashed-blob path directly — faster, no per-file Python dispatch.
+        get_file = getattr(self._source, "get_file", None)
+        delegate = getattr(self._source, "_delegate", None)
+        if delegate is not None and hasattr(delegate, "get_file"):
+            get_file = delegate.get_file
+        use_get_file = (
+            get_file is not None
+            and getattr(self._source, "_enc_backup", None) is not None
+        ) or (
+            delegate is not None and getattr(delegate, "_enc_backup", None) is not None
+        )
+
         for i, ((domain, rel), file_id) in enumerate(items):
             if cancelled_cb and cancelled_cb():
                 _log.info("Extraction cancelled after %d/%d files",
                           result.copied, result.total)
                 break
 
-            src = backup_root / file_id[:2] / file_id
-            if not src.exists():
+            if use_get_file:
+                src = get_file(domain, rel)
+            else:
+                p = backup_root / file_id[:2] / file_id
+                src = p if p.exists() else None
+
+            if src is None:
                 result.skipped += 1
                 if progress_cb:
                     progress_cb(i + 1, result.total, f"[missing] {domain}/{rel}")
