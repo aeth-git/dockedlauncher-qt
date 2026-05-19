@@ -166,6 +166,52 @@ class _ExtractWorker(QObject):
             self.error.emit(str(e))
 
 
+class _IleappWorker(QObject):
+    """Runs iLEAPP as a subprocess against an extracted backup tree."""
+    line     = pyqtSignal(str)      # latest stdout/stderr line
+    finished = pyqtSignal(int, str)  # (returncode, report_html_path_or_empty)
+    error    = pyqtSignal(str)
+
+    def __init__(self, extraction_dir, output_dir):
+        super().__init__()
+        from pathlib import Path
+        self._extraction_dir = Path(extraction_dir)
+        self._output_dir     = Path(output_dir)
+        self._cancelled = False
+        self._proc = None
+
+    def cancel(self):
+        self._cancelled = True
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except OSError:
+                pass
+
+    def run(self):
+        import subprocess
+        from .ileapp_runner import build_argv, find_report_html
+        try:
+            argv = build_argv(self._extraction_dir, self._output_dir)
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+            self._proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, encoding="utf-8", errors="replace",
+            )
+            for raw in self._proc.stdout:
+                if self._cancelled:
+                    break
+                self.line.emit(raw.rstrip())
+            rc = self._proc.wait()
+            report = find_report_html(self._output_dir)
+            self.finished.emit(rc, str(report) if report else "")
+        except FileNotFoundError as e:
+            self.error.emit(str(e))
+        except Exception as e:
+            self.error.emit(f"iLEAPP run failed: {e}")
+
+
 def _start_worker(token, parser_cls, source, on_done, on_error):
     """Create a QObject worker, move it to a QThread, wire signals, start."""
     thread = QThread()
@@ -630,6 +676,8 @@ class ForensicWindow(QMainWindow):
                 if len(errors) > 5:
                     msg += f"\n… and {len(errors) - 5} more"
             QMessageBox.information(self, "Extraction Complete", msg)
+            if copied > 0:
+                self._maybe_run_ileapp(dest)
 
         def _on_error(msg):
             progress.close()
@@ -637,6 +685,84 @@ class ForensicWindow(QMainWindow):
             QMessageBox.critical(self, "Extraction Failed", msg)
 
         worker.progress.connect(_on_progress)
+        worker.finished.connect(_on_finished)
+        worker.error.connect(_on_error)
+        progress.canceled.connect(worker.cancel)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+        progress.exec_()
+
+    def _maybe_run_ileapp(self, extraction_dir: str):
+        """After a successful extraction, optionally run iLEAPP on it."""
+        from .ileapp_runner import find_ileapp_cmd
+
+        ans = QMessageBox.question(
+            self, "Analyze with iLEAPP",
+            "Run iLEAPP analysis on the extraction now?\n\n"
+            "iLEAPP runs ~200 artifact parsers and produces an HTML report.\n"
+            "This can take several minutes for a large extraction.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if ans != QMessageBox.Yes:
+            return
+
+        if find_ileapp_cmd() is None:
+            QMessageBox.information(
+                self, "iLEAPP Not Found",
+                "iLEAPP is not installed.\n\n"
+                "Install with:\n  pip install ileapp\n\n"
+                "Or clone https://github.com/abrignoni/iLEAPP and set "
+                "ILEAPP_PATH to the ileapp.py file."
+            )
+            return
+
+        from pathlib import Path
+        output_dir = Path(extraction_dir).parent / (Path(extraction_dir).name + "_ileapp")
+
+        progress = QProgressDialog("Starting iLEAPP…", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Running iLEAPP")
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(560)
+        progress.setValue(0)
+
+        thread = QThread()
+        worker = _IleappWorker(extraction_dir, output_dir)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        def _on_line(text):
+            short = text[-90:] if len(text) > 90 else text
+            progress.setLabelText(f"iLEAPP\n{short}")
+
+        def _on_finished(rc, report_html):
+            progress.close()
+            thread.quit()
+            if rc == 0 and report_html:
+                ans2 = QMessageBox.question(
+                    self, "iLEAPP Complete",
+                    f"Analysis complete.\n\nReport:\n{report_html}\n\nOpen it now?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+                )
+                if ans2 == QMessageBox.Yes:
+                    import webbrowser
+                    webbrowser.open(Path(report_html).as_uri())
+            elif rc == 0:
+                QMessageBox.information(
+                    self, "iLEAPP Complete",
+                    f"Analysis finished but no index.html was found under:\n{output_dir}"
+                )
+            else:
+                QMessageBox.warning(
+                    self, "iLEAPP Exited With Error",
+                    f"iLEAPP exited with code {rc}. Check the output directory:\n{output_dir}"
+                )
+
+        def _on_error(msg):
+            progress.close()
+            thread.quit()
+            QMessageBox.critical(self, "iLEAPP Failed", msg)
+
+        worker.line.connect(_on_line)
         worker.finished.connect(_on_finished)
         worker.error.connect(_on_error)
         progress.canceled.connect(worker.cancel)
