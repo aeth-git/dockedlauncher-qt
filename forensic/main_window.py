@@ -774,7 +774,6 @@ class ForensicWindow(QMainWindow):
             if not self._install_ileapp():
                 return
 
-        from pathlib import Path
         output_dir = Path(extraction_dir).parent / (Path(extraction_dir).name + "_ileapp")
 
         progress = QProgressDialog("Starting iLEAPP…", "Cancel", 0, 0, self)
