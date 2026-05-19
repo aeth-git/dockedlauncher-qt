@@ -18,13 +18,19 @@ from pathlib import Path
 from typing import List, Optional
 
 
+DEFAULT_CLONE_DIR = Path.home() / "iLEAPP"
+ILEAPP_GIT_URL = "https://github.com/abrignoni/iLEAPP.git"
+
+
 def find_ileapp_cmd() -> Optional[List[str]]:
     """Return the argv prefix to invoke iLEAPP, or None if it can't be found.
 
     Tries in order:
-      1. The `ileapp` console script (pip-installed)
-      2. `python -m ileapp` (works if the package exposes __main__)
+      1. The `ileapp` console script on PATH
+      2. `python -m ileapp` (if the package was pip-installed)
       3. `ILEAPP_PATH` env var pointing at a clone of iLEAPP/ileapp.py
+      4. Default clone location: ~/iLEAPP/ileapp.py
+      5. Sibling clone: ./iLEAPP/ileapp.py (relative to cwd)
     """
     exe = shutil.which("ileapp")
     if exe:
@@ -48,7 +54,52 @@ def find_ileapp_cmd() -> Optional[List[str]]:
         if p.is_dir() and (p / "ileapp.py").is_file():
             return [sys.executable, str(p / "ileapp.py")]
 
+    for candidate in (DEFAULT_CLONE_DIR / "ileapp.py",
+                       Path.cwd() / "iLEAPP" / "ileapp.py"):
+        if candidate.is_file():
+            return [sys.executable, str(candidate)]
+
     return None
+
+
+def auto_install(progress_cb=None) -> Path:
+    """Clone iLEAPP into ~/iLEAPP and pip-install its requirements.
+
+    Returns the path to ileapp.py on success. Raises on failure.
+    progress_cb: optional callable(str) for status messages.
+    """
+    def report(msg):
+        if progress_cb:
+            progress_cb(msg)
+
+    if not shutil.which("git"):
+        raise RuntimeError(
+            "git is not on PATH. Install Git for Windows from "
+            "https://git-scm.com/download/win, then retry."
+        )
+
+    target = DEFAULT_CLONE_DIR
+    if not (target / "ileapp.py").is_file():
+        report(f"Cloning iLEAPP into {target}…")
+        subprocess.run(
+            ["git", "clone", "--depth", "1", ILEAPP_GIT_URL, str(target)],
+            check=True,
+        )
+    else:
+        report(f"iLEAPP already present at {target}")
+
+    req = target / "requirements.txt"
+    if req.is_file():
+        report("Installing iLEAPP requirements (pip)…")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", str(req)],
+            check=True,
+        )
+
+    script = target / "ileapp.py"
+    if not script.is_file():
+        raise RuntimeError(f"Clone succeeded but {script} missing")
+    return script
 
 
 def find_report_html(output_dir: Path) -> Optional[Path]:

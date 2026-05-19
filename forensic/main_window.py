@@ -1,6 +1,7 @@
 """ForensicWindow — the main application window."""
 import os
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from PyQt5.QtCore import (
@@ -692,6 +693,57 @@ class ForensicWindow(QMainWindow):
         thread.start()
         progress.exec_()
 
+    def _install_ileapp(self) -> bool:
+        """Run ileapp_runner.auto_install in a background thread with progress."""
+        from .ileapp_runner import auto_install
+
+        progress = QProgressDialog("Preparing…", None, 0, 0, self)
+        progress.setWindowTitle("Installing iLEAPP")
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(480)
+        progress.setCancelButton(None)
+
+        class _InstallWorker(QObject):
+            status   = pyqtSignal(str)
+            finished = pyqtSignal()
+            error    = pyqtSignal(str)
+            def run(self):
+                try:
+                    auto_install(progress_cb=lambda m: self.status.emit(m))
+                    self.finished.emit()
+                except Exception as e:
+                    self.error.emit(str(e))
+
+        thread = QThread()
+        worker = _InstallWorker()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+
+        result = {"ok": False, "err": None}
+        def _ok():
+            result["ok"] = True
+            progress.close()
+            thread.quit()
+        def _err(msg):
+            result["err"] = msg
+            progress.close()
+            thread.quit()
+
+        worker.status.connect(progress.setLabelText)
+        worker.finished.connect(_ok)
+        worker.error.connect(_err)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+        progress.exec_()
+
+        if result["ok"]:
+            QMessageBox.information(self, "iLEAPP Installed",
+                                     f"iLEAPP is installed at {Path.home() / 'iLEAPP'}.")
+            return True
+        QMessageBox.critical(self, "Install Failed",
+                              result["err"] or "Unknown error during install")
+        return False
+
     def _maybe_run_ileapp(self, extraction_dir: str):
         """After a successful extraction, optionally run iLEAPP on it."""
         from .ileapp_runner import find_ileapp_cmd
@@ -707,14 +759,20 @@ class ForensicWindow(QMainWindow):
             return
 
         if find_ileapp_cmd() is None:
-            QMessageBox.information(
+            ans = QMessageBox.question(
                 self, "iLEAPP Not Found",
                 "iLEAPP is not installed.\n\n"
-                "Install with:\n  pip install ileapp\n\n"
-                "Or clone https://github.com/abrignoni/iLEAPP and set "
-                "ILEAPP_PATH to the ileapp.py file."
+                "Download it now? This will:\n"
+                "  • git clone https://github.com/abrignoni/iLEAPP\n"
+                f"    into {Path.home() / 'iLEAPP'}\n"
+                "  • pip install its requirements\n\n"
+                "Requires git on PATH. Takes 1–3 minutes.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
             )
-            return
+            if ans != QMessageBox.Yes:
+                return
+            if not self._install_ileapp():
+                return
 
         from pathlib import Path
         output_dir = Path(extraction_dir).parent / (Path(extraction_dir).name + "_ileapp")
