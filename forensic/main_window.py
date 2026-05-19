@@ -670,10 +670,11 @@ class ForensicWindow(QMainWindow):
         except PermissionError as e:
             msg = str(e)
             if "encrypted" in msg.lower() or "password" in msg.lower():
+                from PyQt5.QtWidgets import QLineEdit
                 pwd, ok = QInputDialog.getText(
                     self, "Encrypted Backup",
                     "This backup is encrypted. Enter the backup password:",
-                    echo=QInputDialog.Password
+                    QLineEdit.Password
                 )
                 if not ok:
                     return
