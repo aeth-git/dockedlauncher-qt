@@ -91,8 +91,12 @@ def auto_install(progress_cb=None) -> Path:
     req = target / "requirements.txt"
     if req.is_file():
         report("Installing iLEAPP requirements (pip)…")
+        # cwd=target — iLEAPP's requirements.txt references whl_files/*.whl
+        # with relative paths that pip resolves against the cwd, not the
+        # requirements file's directory.
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", str(req)],
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            cwd=str(target),
             check=True,
         )
 
